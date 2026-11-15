@@ -71,7 +71,7 @@ def jpeg(color: tuple[int, int, int]) -> bytes:
     return buffer.getvalue()
 
 
-FRAMES = {i: jpeg((i * 40, 100, 200)) for i in range(1, 6)}
+FRAMES = {i: jpeg((i * 40, 100, 200)) for i in range(6)}
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +81,7 @@ FRAMES = {i: jpeg((i * 40, 100, 200)) for i in range(1, 6)}
 
 def test_build_gif_is_a_looping_animation() -> None:
     """Frames become one looping GIF, with a pause on the newest."""
-    frames = [FRAMES[i] for i in (5, 4, 3, 2, 1)]
+    frames = [FRAMES[i] for i in (5, 4, 3, 2, 1, 0)]
     gif = Image.open(io.BytesIO(build_gif(frames)))
 
     assert gif.format == "GIF"
@@ -123,12 +123,12 @@ async def test_fetch_frame_sends_if_modified_since() -> None:
     session = Mock()
     session.get = Mock(return_value=response(200, b"jpg", LM_2))
 
-    frame = await fetch_frame(session, 1, LM_1)
+    frame = await fetch_frame(session, 0, LM_1)
 
     assert frame.data == b"jpg"
     assert frame.last_modified == LM_2
     url = session.get.call_args.args[0]
-    assert url == "https://www.idokep.hu/radar/radar1.jpg"
+    assert url == "https://www.idokep.hu/radar/radar0.jpg"
     assert session.get.call_args.kwargs["headers"]["If-Modified-Since"] == LM_1
 
 
@@ -157,10 +157,10 @@ async def test_fetch_frame_error() -> None:
 
 
 class FakeSite:
-    """Serves radar1..5 like idokep.hu: 304 if unchanged."""
+    """Serves radar0..5 like idokep.hu: 304 if unchanged."""
 
     def __init__(self) -> None:
-        """Start with five frames."""
+        """Start with six frames."""
         self.frames = dict(FRAMES)
         self.last_modified = LM_1
         self.requests: list[int] = []
@@ -168,9 +168,9 @@ class FakeSite:
 
     def new_frame(self, data: bytes, last_modified: str | None) -> None:
         """Shift the frames by one, like the site does every ~5 minutes."""
-        for i in range(5, 1, -1):
+        for i in range(5, 0, -1):
             self.frames[i] = self.frames[i - 1]
-        self.frames[1] = data
+        self.frames[0] = data
         self.last_modified = last_modified
 
     async def fetch(
@@ -234,14 +234,32 @@ def fake_fetch(site: FakeSite):
 async def test_first_update_downloads_all_frames(
     coordinator: RadarCoordinator, site: FakeSite
 ) -> None:
-    """Start-up downloads radar1, then radar5..radar2."""
+    """Start-up downloads radar0, then radar5..radar1."""
     image = await update_at(coordinator, T0)
 
-    assert sorted(site.requests) == [1, 2, 3, 4, 5]
+    assert sorted(site.requests) == [0, 1, 2, 3, 4, 5]
     assert gif_frames(image.gif) == FRAME_COUNT
     assert image.updated == datetime(2026, 10, 29, 23, 37, 36, tzinfo=UTC)
-    # Oldest first: radar5 .. radar1
-    assert list(coordinator._frames) == [FRAMES[i] for i in (5, 4, 3, 2, 1)]
+    # Oldest first: radar5 .. radar0
+    assert list(coordinator._frames) == [FRAMES[i] for i in (5, 4, 3, 2, 1, 0)]
+
+
+@pytest.mark.asyncio
+async def test_first_update_keeps_a_repeated_frame_once(
+    coordinator: RadarCoordinator, site: FakeSite
+) -> None:
+    """Mid-shift two files can be the same picture; the GIF shows it once."""
+    site.frames[1] = site.frames[2]
+    image = await update_at(coordinator, T0)
+
+    assert list(coordinator._frames) == [FRAMES[i] for i in (5, 4, 3, 2, 0)]
+    assert gif_frames(image.gif) == FRAME_COUNT - 1
+
+    # The next new frame is simply added; the animation fills up again
+    new = jpeg((0, 0, 0))
+    site.new_frame(new, LM_2)
+    await update_at(coordinator, T0 + timedelta(minutes=5))
+    assert list(coordinator._frames) == [FRAMES[i] for i in (5, 4, 3, 2, 0)] + [new]
 
 
 @pytest.mark.asyncio
@@ -254,7 +272,7 @@ async def test_unchanged_frame_costs_one_cheap_request(
 
     second = await update_at(coordinator, T0 + timedelta(minutes=1))
 
-    assert site.requests == [1]
+    assert site.requests == [0]
     assert second is first
 
 
@@ -270,8 +288,8 @@ async def test_new_frame_downloads_only_that_frame(
 
     image = await update_at(coordinator, T0 + timedelta(minutes=5))
 
-    assert site.requests == [1]
-    assert list(coordinator._frames) == [FRAMES[i] for i in (4, 3, 2, 1)] + [new]
+    assert site.requests == [0]
+    assert list(coordinator._frames) == [FRAMES[i] for i in (4, 3, 2, 1, 0)] + [new]
     assert image.updated == datetime(2026, 10, 29, 23, 42, 36, tzinfo=UTC)
     assert gif_frames(image.gif) == FRAME_COUNT
 
@@ -287,7 +305,7 @@ async def test_next_frame_seen_late_still_shifts(
 
     await update_at(coordinator, T0 + timedelta(minutes=10))
 
-    assert site.requests == [1]
+    assert site.requests == [0]
 
 
 @pytest.mark.asyncio
@@ -304,9 +322,9 @@ async def test_missed_frames_still_only_shift(
 
     await update_at(coordinator, T0 + timedelta(minutes=15))
 
-    assert site.requests == [1]
+    assert site.requests == [0]
     frames = list(coordinator._frames)
-    assert frames == [FRAMES[i] for i in (4, 3, 2, 1)] + [newest]
+    assert frames == [FRAMES[i] for i in (4, 3, 2, 1, 0)] + [newest]
     assert missed not in frames
 
 
@@ -317,7 +335,7 @@ async def test_rewritten_same_picture_is_not_a_new_frame(
     """A newer Last-Modified with the same picture doesn't add a frame."""
     await update_at(coordinator, T0)
     before = list(coordinator._frames)
-    site.last_modified = LM_2  # same radar1 content
+    site.last_modified = LM_2  # same radar0 content
 
     await update_at(coordinator, T0 + timedelta(minutes=5))
 
@@ -389,7 +407,7 @@ async def test_checks_on_every_fifth_minute_only_after_a_frame(
     site.new_frame(jpeg((0, 0, 0)), LM_2)
     with patch.object(dt_util, "utcnow", return_value=minute(5)):
         await coordinator.async_tick(minute(5))  # 23:45:59
-    assert site.requests == [1]
+    assert site.requests == [0]
 
 
 @pytest.mark.asyncio
@@ -404,14 +422,14 @@ async def test_retries_every_minute_until_new_frame(
     with patch.object(dt_util, "utcnow", return_value=SLOT):
         await coordinator.async_tick(SLOT)  # 23:40:59: unchanged (304)
         await coordinator.async_tick(minute(1))  # 23:41:59: still unchanged
-    assert site.requests == [1, 1]
+    assert site.requests == [0, 0]
 
     site.new_frame(jpeg((0, 0, 0)), LM_2)
     with patch.object(dt_util, "utcnow", return_value=minute(2)):
         await coordinator.async_tick(minute(2))  # 23:42:59: new frame
         await coordinator.async_tick(minute(3))  # found: no more retries
         await coordinator.async_tick(minute(4))
-    assert site.requests == [1, 1, 1]
+    assert site.requests == [0, 0, 0]
 
 
 @pytest.mark.asyncio
@@ -427,7 +445,7 @@ async def test_retries_every_minute_after_failure(
     with patch.object(dt_util, "utcnow", return_value=SLOT):
         await coordinator.async_tick(SLOT)
         await coordinator.async_tick(minute(1))
-    assert site.requests == [1, 1]
+    assert site.requests == [0, 0]
 
 
 # ---------------------------------------------------------------------------

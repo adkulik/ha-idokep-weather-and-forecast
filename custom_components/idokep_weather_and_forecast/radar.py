@@ -1,22 +1,24 @@
 """
 National radar animation for the Radar service entry.
 
-idokep.hu publishes the national radar as five JPEG frames with the map
-already drawn in: /radar/radar1.jpg (newest) ... /radar/radar5.jpg (oldest),
-about five minutes apart, all rewritten when a new frame is added. They are
-turned into one looping GIF (oldest to newest).
+idokep.hu publishes the national radar as six JPEG frames with the map
+already drawn in: /radar/radar0.jpg (newest) ... /radar/radar5.jpg (oldest),
+about five minutes apart. They are turned into one looping GIF (oldest to
+newest). A new frame lands in radar0.jpg first; the other files follow it one
+by one over the next minutes, so for a while two of them can be the same.
 
-To keep traffic low, radar1.jpg is checked with a conditional request
+To keep traffic low, radar0.jpg is checked with a conditional request
 ("only if changed": the server answers 304 with no body). A new frame becomes
 downloadable about a minute after each 5-minute mark, so it is checked at
 x:00:59, x:05:59, ... x:55:59; if no new frame is there yet (or the check
 fails), again every minute (x:01:59, x:02:59, ...) until one arrives. When a
 new frame appears, only that frame is downloaded and the older ones shift
-along; all five are downloaded only at start-up.
+along; all six are downloaded only at start-up (a frame repeated there is
+kept once, so the animation can start with fewer frames).
 
 The shift assumes exactly one frame was published since the last one. If
 frames were missed (e.g. idokep.hu unreachable for a while), the animation
-skips them until they move out of the five-frame window.
+skips them until they move out of the six-frame window.
 """
 
 from __future__ import annotations
@@ -46,7 +48,9 @@ if TYPE_CHECKING:
 FRAME_URL = "https://www.idokep.hu/radar/radar{index}.jpg"
 # idokep.hu's radar page (the radar device's "Visit" link)
 RADAR_PAGE_URL = "https://www.idokep.hu/radar"
-FRAME_COUNT = 5
+# radar0.jpg is the newest frame, radar5.jpg the oldest
+NEWEST_INDEX = 0
+FRAME_COUNT = 6
 TIMEOUT = 10
 # Animation timing: each frame, then a longer pause on the newest
 FRAME_MS = 1000
@@ -209,7 +213,7 @@ class RadarCoordinator(DataUpdateCoordinator[RadarImage]):
 
     async def _update_frames(self) -> None:
         """Fetch the newest frame if it changed and shift the others along."""
-        newest = await fetch_frame(self._session, 1, self._last_modified)
+        newest = await fetch_frame(self._session, NEWEST_INDEX, self._last_modified)
         if newest is None:
             return  # unchanged (304)
         if self._frames and newest.data == self._frames[-1]:
@@ -218,17 +222,23 @@ class RadarCoordinator(DataUpdateCoordinator[RadarImage]):
             return
 
         now = dt_util.utcnow()
-        if len(self._frames) == FRAME_COUNT:
-            # The previous newest frame is now radar2: just add the new one
+        if self._frames:
+            # The previous newest frame is now radar1: just add the new one
             self._frames.append(newest.data)
         else:
-            # Start-up: get the older frames too
+            # Start-up: get the older frames too (radar5 .. radar1)
             older = await asyncio.gather(
-                *(fetch_frame(self._session, i) for i in range(FRAME_COUNT, 1, -1))
+                *(
+                    fetch_frame(self._session, i)
+                    for i in range(FRAME_COUNT - 1, NEWEST_INDEX, -1)
+                )
             )
-            self._frames.clear()
-            self._frames.extend(frame.data for frame in older if frame is not None)
-            self._frames.append(newest.data)
+            for data in [frame.data for frame in older if frame is not None] + [
+                newest.data
+            ]:
+                # Files still being shifted can repeat a frame: keep it once
+                if not self._frames or data != self._frames[-1]:
+                    self._frames.append(data)
         self._last_modified = newest.last_modified
         self._last_new_frame = now
         self._got_frame_this_slot = True

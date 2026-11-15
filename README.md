@@ -13,7 +13,7 @@ Az integráció az idokep.hu nyilvános oldalait olvassa (nincs hivatalos API, f
 - **Előrejelzési szenzorok**: hőmérséklet, állapot, mai maximum/minimum, szélirány, szélerősség, becsült szélsebesség és széllökés, csapadék, csapadék valószínűsége, valamint a település állomásainak átlagából páratartalom, harmatpont, légnyomás és UV-index, és ezekből számított hőérzet
 - **Riasztások**: riasztás 3 órán belül, figyelmeztetés 24 órán belül (nincs, sárga, narancs, piros) és vihar egy órán belül
 - **Időjárás-állomások** (nem kötelező): egy vagy több idokep.hu automata 12 mért adata egy eszközben összevonva, belőlük számított értékek (harmatpont, hőérzet, nedves hőmérséklet, abszolút páratartalom, páranyomás, páranyomás-hiány, felhőalap) és a mérés ideje
-- **Országos radar**: animált GIF az utolsó 5 radarképből, külön szolgáltatásként
+- **Országos radar**: animált GIF az utolsó 6 radarképből, külön szolgáltatásként
 - Magyar és angol fordítás, a Home Assistant nyelvének megfelelően
 - Csak a szükséges oldalakat tölti le, és a legutóbbi jó adatokat lemezre menti, így újraindítás után is azonnal van adat
 
@@ -83,7 +83,7 @@ Minden szenzor `stations` attribútuma mutatja, melyik állomás(ok)tól szárma
 
 ### `Országos Radarkép` (National Radar Image) – Radar szolgáltatás
 
-Az első bejegyzés felvételekor automatikusan létrejön egy **Radar** bejegyzés egy kép entitással (**Országos radarkép**, angolul National radar image). Ez az országos radar utolsó 5 képéből készült animált GIF (képenként 1 mp, az utolsón 2 mp). Ha törlöd, a következő újraindításkor vagy újratöltéskor újra létrejön; ha nem kell, inkább kapcsold ki.
+Az első bejegyzés felvételekor automatikusan létrejön egy **Radar** bejegyzés egy kép entitással (**Országos radarkép**, angolul National radar image). Ez az országos radar utolsó 6 képéből készült animált GIF (képenként 1 mp, az utolsón 2 mp). Ha törlöd, a következő újraindításkor vagy újratöltéskor újra létrejön; ha nem kell, inkább kapcsold ki.
 
 ## Telepítés
 
