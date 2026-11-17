@@ -9,7 +9,6 @@ import re
 import socket
 import unicodedata
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from typing import Any, ClassVar
 
 import aiohttp
@@ -22,16 +21,6 @@ except ImportError:
     zoneinfo = None
 
 from .const import LOGGER
-
-
-@dataclass
-class AlertData:
-    """Single weather alert."""
-
-    level: str  # "yellow", "orange", "red"
-    type: str  # Alert type (e.g., "ónos eső", "vihar", "szél")
-    description: str  # Full description
-    icon_url: str | None = None  # URL to alert icon
 
 
 # Configuration and constants
@@ -370,6 +359,26 @@ class CurrentWeatherParser(WeatherParser):
         return result
 
 
+# Alert levels, lowest first ("none": no alert)
+ALERT_NONE = "none"
+ALERT_LEVELS = [ALERT_NONE, "yellow", "orange", "red"]
+
+# Alert types: idokep.hu's own type names (as in its /api/current_weather
+# data), in its order; "other" for a text no type matches
+ALERT_TYPES = [
+    "zivatar",  # thunderstorm
+    "szel",  # wind
+    "eso",  # rain
+    "onoseso",  # freezing rain
+    "hofuvas",  # blowing snow
+    "ho",  # snow
+    "kod",  # fog
+    "fagy",  # frost
+    "meleg",  # heat
+    "other",
+]
+
+
 class AlertParser(WeatherParser):
     """Parser for weather alerts."""
 
@@ -378,48 +387,76 @@ class AlertParser(WeatherParser):
     # next two at the integration's fetch on the hour.
     HOURS = 3
 
-    # Mapping of Hungarian alert types to English names
-    ALERT_TYPE_MAP: ClassVar[dict[str, str]] = {
-        "ónos eső": "freezing_rain",
-        "ónosesőre": "freezing_rain",
-        "vihar": "storm",
-        "zivatar": "thunderstorm",
-        "szél": "wind",
-        "hó": "snow",
-        "eső": "rain",
-        "köd": "fog",
-        "hőség": "heat",
-        "hideg": "cold",
-        "fagy": "frost",
-    }
+    # Words of an alert text (lower case) and their type, checked in order:
+    # "ónos eső" before "eső", "hófúvás" and "hóvihar" before "hó" and "vihar"
+    _TYPE_WORDS: ClassVar[list[tuple[tuple[str, ...], str]]] = [
+        (("ónos",), "onoseso"),
+        (("hófúvás", "hóvihar"), "hofuvas"),
+        (("zivatar",), "zivatar"),
+        (("szél", "vihar"), "szel"),
+        (("eső",), "eso"),
+        (("havaz", "hó"), "ho"),
+        (("köd",), "kod"),
+        (("fagy", "hideg"), "fagy"),
+        (("hőség", "meleg"), "meleg"),
+    ]
 
     def parse(self, soup: BeautifulSoup) -> dict[str, Any]:
         """
-        Parse the alerts of the hourly cards and the warning banner's level.
+        Parse the alerts of the hourly cards and the banner's warnings.
 
         The hourly cards' icons are alerts ("riasztás") for the coming hours;
         the banner at the top of the page is an alert or a warning
-        ("figyelmeztetés").
+        ("figyelmeztetés"). Both are lists of {"type", "level"}: one item
+        per type in force, at its highest level.
         """
-        alerts = self._parse_hourly_alerts(soup)
+        warnings = self._merge(self._parse_banners(soup))
         return {
-            "alerts": alerts,
-            "alerts_by_level": self._organize_by_level(alerts),
-            "warning_level": self._parse_warning_level(soup),
+            "alerts": self._merge(self._parse_hourly_alerts(soup)),
+            "warnings": warnings,
+            "warning_level": highest_alert_level(warnings),
         }
 
-    def _parse_warning_level(self, soup: BeautifulSoup) -> str:
+    def _parse_banners(self, soup: BeautifulSoup) -> list[dict[str, str]]:
         """
-        Return the level of the banner at the top of the page, or "none".
+        Return the banners at the top of the page.
 
-        It holds only the level and the type, e.g. "Sárga figyelmeztetés
+        A banner holds only the level and the type, e.g. "Sárga figyelmeztetés
         zivatarra" or "Sárga riasztás viharos szélre" (<div class="...
-        inlineWeatherAlert">); the level comes from the text.
+        inlineWeatherAlert">).
         """
-        box = soup.find("div", class_="inlineWeatherAlert")
-        if not isinstance(box, Tag):
-            return "none"
-        return self._level_from_text(box.get_text(" ", strip=True)) or "none"
+        return [
+            item
+            for box in soup.find_all("div", class_="inlineWeatherAlert")
+            if isinstance(box, Tag)
+            and (item := self._alert_from_text(box.get_text(" ", strip=True)))
+        ]
+
+    def _parse_hourly_alerts(self, soup: BeautifulSoup) -> list[dict[str, str]]:
+        """Return the alerts of the first hourly cards (from their icons' text)."""
+        alerts = []
+        for container in soup.find_all(
+            "div", class_="genericHourlyAlert", limit=self.HOURS
+        ):
+            if not isinstance(container, Tag):
+                continue
+            link = container.find("a", class_="hover-over")
+            if not isinstance(link, Tag):
+                continue
+            description = link.get("data-bs-content")
+            if isinstance(description, str) and (
+                item := self._alert_from_text(description)
+            ):
+                alerts.append(item)
+        return alerts
+
+    @classmethod
+    def _alert_from_text(cls, text: str) -> dict[str, str] | None:
+        """Return {"type", "level"} of an alert text (None without a level)."""
+        level = cls._level_from_text(text)
+        if level is None:
+            return None
+        return {"type": cls._type_from_text(text), "level": level}
 
     @staticmethod
     def _level_from_text(text: str) -> str | None:
@@ -433,86 +470,40 @@ class AlertParser(WeatherParser):
             return "red"
         return None
 
-    def _parse_hourly_alerts(self, soup: BeautifulSoup) -> list[AlertData]:
-        """Parse hourly forecast alert icons."""
-        alerts = []
-        seen_alerts = set()  # To avoid duplicates
+    @classmethod
+    def _type_from_text(cls, text: str) -> str:
+        """Return the alert type named in an alert text ("other" if none)."""
+        lowered = text.lower()
+        for words, alert_type in cls._TYPE_WORDS:
+            if any(word in lowered for word in words):
+                return alert_type
+        return "other"
 
-        alert_containers = soup.find_all(
-            "div", class_="genericHourlyAlert", limit=self.HOURS
-        )
+    @staticmethod
+    def _merge(items: list[dict[str, str]]) -> list[dict[str, str]]:
+        """Return one item per type, at its highest level, in type order."""
+        highest: dict[str, str] = {}
+        for item in items:
+            current = highest.get(item["type"], ALERT_NONE)
+            if ALERT_LEVELS.index(item["level"]) > ALERT_LEVELS.index(current):
+                highest[item["type"]] = item["level"]
+        return [
+            {"type": alert_type, "level": highest[alert_type]}
+            for alert_type in ALERT_TYPES
+            if alert_type in highest
+        ]
 
-        for container in alert_containers:
-            if not isinstance(container, Tag):
-                continue
 
-            # Find the alert link/image
-            alert_link = container.find("a", class_="hover-over")
-            if not alert_link or not isinstance(alert_link, Tag):
-                continue
+def highest_alert_level(items: list[dict[str, str]] | None) -> str | None:
+    """Return the highest level of the items ("none" if empty, None if unknown)."""
+    if items is None:
+        return None
+    return max(
+        (item["level"] for item in items),
+        key=ALERT_LEVELS.index,
+        default=ALERT_NONE,
+    )
 
-            # Extract alert description from data-bs-content
-            description = alert_link.get("data-bs-content", "")
-            if not description or not isinstance(description, str):
-                continue
-
-            level = self._level_from_text(description)
-
-            if not level:
-                continue
-
-            # Extract icon URL
-            img = alert_link.find("img", class_="forecast-alert-icon")
-            icon_url = None
-            if img and isinstance(img, Tag):
-                src = img.get("src")
-                if src and isinstance(src, str):
-                    icon_url = (
-                        f"https://www.idokep.hu{src}" if src.startswith("/") else src
-                    )
-
-            # Extract alert type
-            alert_type = self._extract_alert_type(description)
-
-            # Avoid duplicate alerts
-            alert_key = (level, alert_type, description)
-            if alert_key not in seen_alerts:
-                seen_alerts.add(alert_key)
-                alerts.append(
-                    AlertData(
-                        level=level,
-                        type=alert_type,
-                        description=description,
-                        icon_url=icon_url,
-                    )
-                )
-
-        return alerts
-
-    def _extract_alert_type(self, description: str) -> str:
-        """Extract standardized alert type from description."""
-        description_lower = description.lower()
-
-        for hungarian, english in self.ALERT_TYPE_MAP.items():
-            if hungarian in description_lower:
-                return english
-
-        # Default to generic alert
-        return "general"
-
-    def _organize_by_level(self, alerts: list[AlertData]) -> dict[str, list[dict]]:
-        """Organize alerts by severity level."""
-        by_level = {"yellow": [], "orange": [], "red": []}
-
-        for alert in alerts:
-            alert_dict = {
-                "type": alert.type,
-                "description": alert.description,
-                "icon_url": alert.icon_url,
-            }
-            by_level[alert.level].append(alert_dict)
-
-        return by_level
 
 
 class HourlyForecastParser(WeatherParser):

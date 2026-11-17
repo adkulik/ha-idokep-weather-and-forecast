@@ -13,13 +13,12 @@ only what is still valid:
 
 from __future__ import annotations
 
-from dataclasses import asdict
 from datetime import date, datetime, timedelta
 from typing import Any
 
 from homeassistant.util import dt as dt_util
 
-from .api import AlertData, WindStrengthMapper
+from .api import ALERT_LEVELS, ALERT_TYPES, WindStrengthMapper
 from .const import (
     CURRENT,
     DOMAIN,
@@ -45,14 +44,8 @@ def storage_key(entry_id: str) -> str:
 
 
 def serialize(data: dict[str, Any]) -> dict[str, Any]:
-    """Return page data in a JSON-safe form (alerts become plain dicts)."""
-    result = dict(data)
-    if "alerts" in result:
-        result["alerts"] = [
-            asdict(alert) if isinstance(alert, AlertData) else alert
-            for alert in result["alerts"]
-        ]
-    return result
+    """Return page data in a JSON-safe form (a copy: it's all plain data)."""
+    return dict(data)
 
 
 def restore(source: str, saved: dict[str, Any], now: datetime) -> dict[str, Any]:
@@ -102,7 +95,6 @@ def _restore_forecast(
 
     if now - fetched <= MAX_AGE:
         for key in (
-            "alerts_by_level",
             "warning_level",
             "wind_bearing",
             "wind_strength",
@@ -114,14 +106,30 @@ def _restore_forecast(
         ):
             if key in data:
                 result[key] = data[key]
-        if "alerts" in data:
-            result["alerts"] = [AlertData(**alert) for alert in data["alerts"]]
+        for key in ("alerts", "warnings"):
+            if key in data:
+                result[key] = _valid_alerts(data[key])
         strength = result.get("wind_strength")
         if strength in WindStrengthMapper.SPEEDS:
             result["wind_speed"] = WindStrengthMapper.SPEEDS[strength]
             result["wind_gust_speed"] = WindStrengthMapper.GUSTS[strength]
 
     return result
+
+
+def _valid_alerts(items: list[Any]) -> list[dict[str, str]]:
+    """
+    Return the saved alerts in the current form.
+
+    Alerts saved by older versions (other types, extra fields) are dropped.
+    """
+    return [
+        {"type": item["type"], "level": item["level"]}
+        for item in items
+        if isinstance(item, dict)
+        and item.get("type") in ALERT_TYPES
+        and item.get("level") in ALERT_LEVELS[1:]
+    ]
 
 
 def _with_wind_estimates(item: dict[str, Any]) -> dict[str, Any]:

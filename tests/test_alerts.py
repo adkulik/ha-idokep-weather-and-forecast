@@ -51,13 +51,7 @@ class TestAlertParser:
         parser = AlertParser()
         result = parser.parse(soup)
 
-        assert "alerts" in result
-        assert len(result["alerts"]) == 1
-        alert = result["alerts"][0]
-        assert alert.level == "yellow"
-        assert alert.type == "freezing_rain"
-        assert alert.icon_url is not None
-        assert "onoseso.png" in alert.icon_url
+        assert result["alerts"] == [{"type": "onoseso", "level": "yellow"}]
 
     def test_parse_multiple_hourly_alerts(self) -> None:
         """Test parsing multiple different hourly alerts."""
@@ -79,15 +73,14 @@ class TestAlertParser:
         parser = AlertParser()
         result = parser.parse(soup)
 
-        assert "alerts" in result
-        assert len(result["alerts"]) == 2
-        assert result["alerts"][0].level == "yellow"
-        assert result["alerts"][0].type == "wind"
-        assert result["alerts"][1].level == "orange"
-        assert result["alerts"][1].type == "thunderstorm"
+        # In idokep.hu's type order: thunderstorm before wind
+        assert result["alerts"] == [
+            {"type": "zivatar", "level": "orange"},
+            {"type": "szel", "level": "yellow"},
+        ]
 
-    def test_alerts_organized_by_level(self) -> None:
-        """Test that alerts are properly organized by severity level."""
+    def test_alerts_and_warnings_are_separate(self) -> None:
+        """The banner is a warning; the hourly cards' icons are alerts."""
         html = """
         <div class="background selectiveYellow color-darkblue p-2 mt-2 mb-2 rounded inlineWeatherAlert">
             <a href="/radar#riasztas">Sárga riasztás szélre</a>
@@ -109,17 +102,12 @@ class TestAlertParser:
         parser = AlertParser()
         result = parser.parse(soup)
 
-        assert "alerts_by_level" in result
-        by_level = result["alerts_by_level"]
-
-        # The banner's yellow is the warning level, not an alert
-        assert by_level["yellow"] == []
-        assert len(by_level["orange"]) == 1
-        assert len(by_level["red"]) == 1
+        assert result["alerts"] == [
+            {"type": "zivatar", "level": "orange"},
+            {"type": "szel", "level": "red"},
+        ]
+        assert result["warnings"] == [{"type": "szel", "level": "yellow"}]
         assert result["warning_level"] == "yellow"
-
-        assert by_level["orange"][0]["type"] == "thunderstorm"
-        assert by_level["red"][0]["type"] == "storm"
 
     def test_no_alerts(self) -> None:
         """Test parsing when no alerts are present."""
@@ -132,12 +120,8 @@ class TestAlertParser:
         parser = AlertParser()
         result = parser.parse(soup)
 
-        assert "alerts" in result
-        assert len(result["alerts"]) == 0
-        assert "alerts_by_level" in result
-        assert len(result["alerts_by_level"]["yellow"]) == 0
-        assert len(result["alerts_by_level"]["orange"]) == 0
-        assert len(result["alerts_by_level"]["red"]) == 0
+        assert result["alerts"] == []
+        assert result["warnings"] == []
 
     def test_alert_type_extraction_heat(self) -> None:
         """Test alert type extraction for heat warning."""
@@ -150,7 +134,7 @@ class TestAlertParser:
         parser = AlertParser()
         result = parser.parse(soup)
 
-        assert result["alerts"][0].type == "heat"
+        assert result["alerts"] == [{"type": "meleg", "level": "orange"}]
 
     def test_alert_type_extraction_fog(self) -> None:
         """Test alert type extraction for fog warning."""
@@ -163,7 +147,7 @@ class TestAlertParser:
         parser = AlertParser()
         result = parser.parse(soup)
 
-        assert result["alerts"][0].type == "fog"
+        assert result["alerts"] == [{"type": "kod", "level": "yellow"}]
 
     def test_duplicate_alerts_removed(self) -> None:
         """Test that duplicate alerts are not added multiple times."""

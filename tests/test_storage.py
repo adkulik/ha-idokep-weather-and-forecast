@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING
 import pytest
 from homeassistant.util import dt as dt_util
 
-from custom_components.idokep_weather_and_forecast.api import AlertData
 from custom_components.idokep_weather_and_forecast.const import (
     CURRENT,
     HOURLY,
@@ -43,8 +42,9 @@ FORECAST_DATA = {
     "wind_gust_speed": 28,
     "precipitation": 0.81,
     "precipitation_probability": 25,
-    "alerts": [AlertData(level="yellow", type="wind", description="Szél")],
-    "alerts_by_level": {"yellow": [{"type": "wind"}], "orange": [], "red": []},
+    "alerts": [{"type": "szel", "level": "yellow"}],
+    "warnings": [{"type": "zivatar", "level": "orange"}],
+    "warning_level": "orange",
     "daily_forecast": [
         {"datetime": "2026-10-28", "temperature": 15},
         {"datetime": "2026-10-29", "temperature": 16},
@@ -76,15 +76,28 @@ def test_storage_key() -> None:
     assert storage_key("abc123") == "idokep_weather_and_forecast.abc123"
 
 
-def test_serialize_makes_alerts_json_safe() -> None:
-    """Alert objects are stored as plain dicts."""
+def test_serialize_returns_a_json_safe_copy() -> None:
+    """The page data is plain data; serialize copies it."""
     data = serialize(FORECAST_DATA)
-    assert data["alerts"] == [
-        {"level": "yellow", "type": "wind", "description": "Szél", "icon_url": None}
-    ]
+    assert data == FORECAST_DATA
+    assert data is not FORECAST_DATA
     json.dumps(data)  # must not raise
-    # The live data is left untouched
-    assert isinstance(FORECAST_DATA["alerts"][0], AlertData)
+
+
+def test_restore_drops_alerts_of_older_versions() -> None:
+    """Alerts saved in the old form (English types, extra fields) are dropped."""
+    data = {
+        "alerts": [
+            {"level": "yellow", "type": "wind", "description": "Szél", "icon_url": None},
+            {"type": "kod", "level": "yellow", "description": "Köd"},
+            {"type": "kod", "level": "none"},
+            "not an alert",
+        ],
+        "alerts_by_level": {"yellow": [{"type": "wind"}], "orange": [], "red": []},
+    }
+    result = restore(HOURLY, saved(data, NOW - timedelta(minutes=5)), NOW)
+    assert result["alerts"] == [{"type": "kod", "level": "yellow"}]
+    assert "alerts_by_level" not in result
 
 
 class TestRestoreCurrent:
@@ -123,8 +136,8 @@ class TestRestoreForecast:
         assert result["precipitation"] == 0.81
         assert result["precipitation_probability"] == 25
         assert result["alerts"] == FORECAST_DATA["alerts"]
-        assert isinstance(result["alerts"][0], AlertData)
-        assert result["alerts_by_level"] == FORECAST_DATA["alerts_by_level"]
+        assert result["warnings"] == FORECAST_DATA["warnings"]
+        assert result["warning_level"] == "orange"
         assert result["temperature_max_today"] == 16
         assert result["temperature_min_today"] == 6
 

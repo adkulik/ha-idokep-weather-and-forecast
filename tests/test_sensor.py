@@ -115,29 +115,86 @@ class TestIdokepSensorEntityDescriptions:
         assert IdokepSensor(mock_coordinator, desc).native_value == expected
 
     @pytest.mark.parametrize(
-        ("alerts_by_level", "expected"),
+        ("alerts", "expected"),
         [
             (None, None),  # the forecast page isn't read yet: unknown
-            ({}, "none"),
-            ({"yellow": [], "orange": [], "red": []}, "none"),
-            ({"yellow": [{"type": "fog"}], "orange": [], "red": []}, "yellow"),
-            ({"yellow": [{"type": "fog"}], "orange": [{"type": "wind"}]}, "orange"),
-            ({"yellow": [{}], "orange": [{}], "red": [{}]}, "red"),
+            ([], "none"),
+            ([{"type": "kod", "level": "yellow"}], "yellow"),
+            (
+                [{"type": "szel", "level": "orange"}, {"type": "kod", "level": "yellow"}],
+                "orange",
+            ),
+            (
+                [{"type": "zivatar", "level": "red"}, {"type": "eso", "level": "yellow"}],
+                "red",
+            ),
         ],
     )
     def test_alert_level_is_the_highest(
-        self, mock_coordinator: Mock, alerts_by_level: dict | None, expected: str | None
+        self, mock_coordinator: Mock, alerts: list | None, expected: str | None
     ) -> None:
-        """The state is the highest level among the alerts; it has no attributes."""
+        """The state is the highest level among the alerts."""
         desc = next(d for d in ENTITY_DESCRIPTIONS if d.key == "alert_level")
         assert desc.device_class == SensorDeviceClass.ENUM
         assert desc.options == ["none", "yellow", "orange", "red"]
-        mock_coordinator.data = (
-            {} if alerts_by_level is None else {"alerts_by_level": alerts_by_level}
-        )
+        mock_coordinator.data = {} if alerts is None else {"alerts": alerts}
+        assert IdokepSensor(mock_coordinator, desc).native_value == expected
+
+    @pytest.mark.parametrize(
+        ("key", "attribute"),
+        [("alert_level", "alerts"), ("warning_level", "warnings")],
+    )
+    def test_alert_attributes_have_translated_labels(
+        self, mock_coordinator: Mock, key: str, attribute: str
+    ) -> None:
+        """Each type in force with its label in HA's language, type and level."""
+        desc = next(d for d in ENTITY_DESCRIPTIONS if d.key == key)
+        mock_coordinator.data = {
+            attribute: [
+                {"type": "szel", "level": "orange"},
+                {"type": "kod", "level": "yellow"},
+            ]
+        }
         sensor = IdokepSensor(mock_coordinator, desc)
-        assert sensor.native_value == expected
-        assert sensor.extra_state_attributes is None
+        sensor.hass = Mock()
+        sensor.hass.config.language = "hu"
+        prefix = (
+            "component.idokep_weather_and_forecast.entity.sensor."
+            f"{key}.state_attributes.{attribute}.state"
+        )
+        with patch(
+            "custom_components.idokep_weather_and_forecast.sensor."
+            "translation.async_get_cached_translations",
+            return_value={f"{prefix}.szel": "Szél"},
+        ) as get_translations:
+            attributes = sensor.extra_state_attributes
+        get_translations.assert_called_with(
+            sensor.hass, "hu", "entity", "idokep_weather_and_forecast"
+        )
+        assert attributes == {
+            attribute: [
+                {"label": "Szél", "type": "szel", "level": "orange"},
+                # No translation: the type itself
+                {"label": "kod", "type": "kod", "level": "yellow"},
+            ]
+        }
+
+    @pytest.mark.parametrize("key", ["alert_level", "warning_level"])
+    def test_alert_attributes_unknown_before_the_page_is_read(
+        self, mock_coordinator: Mock, key: str
+    ) -> None:
+        """No attribute until the forecast page is read."""
+        desc = next(d for d in ENTITY_DESCRIPTIONS if d.key == key)
+        mock_coordinator.data = {}
+        assert IdokepSensor(mock_coordinator, desc).extra_state_attributes is None
+
+    def test_other_sensors_have_no_alert_attributes(
+        self, mock_coordinator: Mock
+    ) -> None:
+        """Only the alert sensors have the attribute."""
+        desc = next(d for d in ENTITY_DESCRIPTIONS if d.key == "temperature")
+        mock_coordinator.data = {"alerts": [{"type": "kod", "level": "yellow"}]}
+        assert IdokepSensor(mock_coordinator, desc).extra_state_attributes is None
 
     @pytest.mark.parametrize(
         "key", ["humidity", "dew_point", "apparent_temperature", "pressure", "uv_index"]

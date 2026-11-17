@@ -27,10 +27,16 @@ from homeassistant.const import (
     UnitOfTemperature,
     UnitOfVolumetricFlux,
 )
-from homeassistant.helpers import sun
+from homeassistant.helpers import sun, translation
 
 from . import calculations
-from .api import WeatherConditionMapper, WindStrengthMapper
+from .api import (
+    ALERT_LEVELS,
+    WeatherConditionMapper,
+    WindStrengthMapper,
+    highest_alert_level,
+)
+from .const import DOMAIN
 from .coordinator import HUMIDITY_MAP, PRESSURE_MAP, SOURCE_ENTITIES, UV_MAP
 from .entity import IdokepEntity, IdokepStationEntity
 
@@ -69,9 +75,8 @@ COMPASS_POINTS = [
 ]
 
 
-# Alert levels, lowest first; "none" is shown as "No alert"
-ALERT_NONE = "none"
-ALERT_LEVELS = [ALERT_NONE, "yellow", "orange", "red"]
+# The alert sensors' attribute (a list of the types in force) by sensor key
+ALERT_ATTRIBUTES = {"alert_level": "alerts", "warning_level": "warnings"}
 # Sensors read from the station maps: unavailable if the settlement has no value
 MAP_SENSOR_KEYS = frozenset(
     key
@@ -80,14 +85,22 @@ MAP_SENSOR_KEYS = frozenset(
 )
 
 
-def highest_alert_level(alerts_by_level: dict[str, list] | None) -> str | None:
-    """Return the highest level with an alert (None if the page isn't read yet)."""
-    if alerts_by_level is None:
-        return None
-    return next(
-        (level for level in reversed(ALERT_LEVELS) if alerts_by_level.get(level)),
-        ALERT_NONE,
+def alert_type_label(hass: HomeAssistant, sensor_key: str, alert_type: str) -> str:
+    """
+    Return an alert type's label in Home Assistant's language.
+
+    The labels are the translations of the attribute's values
+    ("state_attributes" of the sensor); the type itself if there's none.
+    """
+    translations = translation.async_get_cached_translations(
+        hass, hass.config.language, "entity", DOMAIN
     )
+    attribute = ALERT_ATTRIBUTES[sensor_key]
+    key = (
+        f"component.{DOMAIN}.entity.sensor.{sensor_key}"
+        f".state_attributes.{attribute}.state.{alert_type}"
+    )
+    return translations.get(key, alert_type)
 
 
 def bearing_to_compass(bearing: float | None) -> str | None:
@@ -195,7 +208,8 @@ ENTITY_DESCRIPTIONS = (
         device_class=SensorDeviceClass.ENUM,
         options=ALERT_LEVELS,
     ),
-    # The level of the banner at the top of the page (an alert or a warning)
+    # The highest level of the banners at the top of the page (alerts or
+    # warnings)
     SensorEntityDescription(
         key="warning_level",
         translation_key="warning_level",
@@ -490,7 +504,7 @@ class IdokepSensor(IdokepEntity, SensorEntity):
         if self.entity_description.key == "wind_direction":
             return bearing_to_compass(self.coordinator.data.get("wind_bearing"))
         if self.entity_description.key == "alert_level":
-            return highest_alert_level(self.coordinator.data.get("alerts_by_level"))
+            return highest_alert_level(self.coordinator.data.get("alerts"))
         value = self.coordinator.data.get(self.entity_description.key)
         if (
             self.entity_description.key == "condition"
@@ -503,6 +517,29 @@ class IdokepSensor(IdokepEntity, SensorEntity):
             # e.g. "unknown" for an unmapped condition; HA shows it as Unknown
             return None
         return value
+
+    @property
+    def extra_state_attributes(self) -> dict[str, list[dict[str, str]]] | None:
+        """
+        Return an alert sensor's alerts or warnings in force.
+
+        Each with its label (in Home Assistant's language), type and level.
+        """
+        key = self.entity_description.key
+        attribute = ALERT_ATTRIBUTES.get(key)
+        items = self.coordinator.data.get(attribute) if attribute else None
+        if items is None:
+            return None
+        return {
+            attribute: [
+                {
+                    "label": alert_type_label(self.hass, key, item["type"]),
+                    "type": item["type"],
+                    "level": item["level"],
+                }
+                for item in items
+            ]
+        }
 
 
 class IdokepStationSensor(IdokepStationEntity, SensorEntity):

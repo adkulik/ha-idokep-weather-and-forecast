@@ -134,15 +134,49 @@
                     "yellow": "Sárga riasztás",
                     "orange": "Narancs riasztás",
                     "red": "Piros riasztás"
+                },
+                "state_attributes": {
+                    "alerts": {
+                        "name": "Riasztások",
+                        "state": {
+                            "zivatar": "Zivatar",
+                            "szel": "Szél",
+                            "eso": "Eső",
+                            "onoseso": "Ónos eső",
+                            "hofuvas": "Hófúvás",
+                            "ho": "Havazás",
+                            "kod": "Köd",
+                            "fagy": "Fagy",
+                            "meleg": "Hőség",
+                            "other": "Egyéb"
+                        }
+                    }
                 }
             },
             "warning_level": {
-                "name": "Figyelmeztetés 24 órán belül",
+                "name": "Figyelmeztetés mára",
                 "state": {
                     "none": "Nincs figyelmeztetés",
                     "yellow": "Sárga figyelmeztetés",
                     "orange": "Narancs figyelmeztetés",
                     "red": "Piros figyelmeztetés"
+                },
+                "state_attributes": {
+                    "warnings": {
+                        "name": "Figyelmeztetések",
+                        "state": {
+                            "zivatar": "Zivatar",
+                            "szel": "Szél",
+                            "eso": "Eső",
+                            "onoseso": "Ónos eső",
+                            "hofuvas": "Hófúvás",
+                            "ho": "Havazás",
+                            "kod": "Köd",
+                            "fagy": "Fagy",
+                            "meleg": "Hőség",
+                            "other": "Egyéb"
+                        }
+                    }
                 }
             },
             "humidity": {

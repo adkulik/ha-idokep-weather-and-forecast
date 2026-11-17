@@ -134,15 +134,49 @@
                     "yellow": "Yellow alert",
                     "orange": "Orange alert",
                     "red": "Red alert"
+                },
+                "state_attributes": {
+                    "alerts": {
+                        "name": "Alerts",
+                        "state": {
+                            "zivatar": "Thunderstorm",
+                            "szel": "Wind",
+                            "eso": "Rain",
+                            "onoseso": "Freezing rain",
+                            "hofuvas": "Blowing snow",
+                            "ho": "Snow",
+                            "kod": "Fog",
+                            "fagy": "Frost",
+                            "meleg": "Heat",
+                            "other": "Other"
+                        }
+                    }
                 }
             },
             "warning_level": {
-                "name": "Warning in 24 hours",
+                "name": "Warning for today",
                 "state": {
                     "none": "No warning",
                     "yellow": "Yellow warning",
                     "orange": "Orange warning",
                     "red": "Red warning"
+                },
+                "state_attributes": {
+                    "warnings": {
+                        "name": "Warnings",
+                        "state": {
+                            "zivatar": "Thunderstorm",
+                            "szel": "Wind",
+                            "eso": "Rain",
+                            "onoseso": "Freezing rain",
+                            "hofuvas": "Blowing snow",
+                            "ho": "Snow",
+                            "kod": "Fog",
+                            "fagy": "Frost",
+                            "meleg": "Heat",
+                            "other": "Other"
+                        }
+                    }
                 }
             },
             "humidity": {

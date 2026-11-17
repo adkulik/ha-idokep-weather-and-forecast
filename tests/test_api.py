@@ -13,7 +13,6 @@ from bs4 import BeautifulSoup, Tag
 
 from custom_components.idokep_weather_and_forecast.api import (
     _BROWSER_HEADERS,
-    AlertData,
     AlertParser,
     DailyForecastParser,
     HourlyForecastParser,
@@ -664,13 +663,40 @@ class TestAlertParserWarning:
         """
         assert parser.parse(BeautifulSoup(html, "html.parser"))["warning_level"] == "none"
 
-    def test_alerts_by_level_structure(self, parser: AlertParser) -> None:
-        """alerts_by_level always has yellow/orange/red keys."""
-        soup = BeautifulSoup("", "html.parser")
-        result = parser.parse(soup)
-        for key in ("yellow", "orange", "red"):
-            assert key in result["alerts_by_level"]
-            assert isinstance(result["alerts_by_level"][key], list)
+    def test_empty_page_has_no_alerts_or_warnings(self, parser: AlertParser) -> None:
+        """Without alerts both lists are empty."""
+        result = parser.parse(BeautifulSoup("", "html.parser"))
+        assert result == {"alerts": [], "warnings": [], "warning_level": "none"}
+
+    @pytest.mark.parametrize(
+        ("text", "warnings"),
+        [
+            ("Sárga riasztás viharos szélre", [{"type": "szel", "level": "yellow"}]),
+            ("Sárga figyelmeztetés zivatarra", [{"type": "zivatar", "level": "yellow"}]),
+            ("Piros figyelmeztetés hó miatt", [{"type": "ho", "level": "red"}]),
+            ("Figyelmeztetés", []),
+        ],
+    )
+    def test_banner_warnings(
+        self, parser: AlertParser, text: str, warnings: list[dict[str, str]]
+    ) -> None:
+        """A banner's type and level are a warning."""
+        result = parser.parse(BeautifulSoup(self.BOX.format(text=text), "html.parser"))
+        assert result["warnings"] == warnings
+
+    def test_several_banners(self, parser: AlertParser) -> None:
+        """Every banner is a warning; the highest level is the sensor's."""
+        html = (
+            self.BOX.format(text="Sárga figyelmeztetés ónos esőre")
+            + self.BOX.format(text="Narancs figyelmeztetés hófúvásra")
+            + self.BOX.format(text="Sárga figyelmeztetés hófúvásra")
+        )
+        result = parser.parse(BeautifulSoup(html, "html.parser"))
+        assert result["warnings"] == [
+            {"type": "onoseso", "level": "yellow"},
+            {"type": "hofuvas", "level": "orange"},
+        ]
+        assert result["warning_level"] == "orange"
 
 
 class TestAlertParserHourly:
@@ -693,8 +719,7 @@ class TestAlertParserHourly:
         soup = BeautifulSoup(html, "html.parser")
         result = parser._parse_hourly_alerts(soup)
         assert len(result) == 1
-        assert result[0].level == "yellow"
-        assert result[0].type == "wind"
+        assert result[0] == {"type": "szel", "level": "yellow"}
 
     def test_hourly_alert_orange_narancs(self, parser: AlertParser) -> None:
         """'Narancs' in description → orange level."""
@@ -708,8 +733,7 @@ class TestAlertParserHourly:
         soup = BeautifulSoup(html, "html.parser")
         result = parser._parse_hourly_alerts(soup)
         assert len(result) == 1
-        assert result[0].level == "orange"
-        assert result[0].type == "rain"
+        assert result[0] == {"type": "eso", "level": "orange"}
 
     def test_hourly_alert_red_piros(self, parser: AlertParser) -> None:
         """'Piros' in description → red level."""
@@ -722,8 +746,7 @@ class TestAlertParserHourly:
         """
         soup = BeautifulSoup(html, "html.parser")
         result = parser._parse_hourly_alerts(soup)
-        assert len(result) == 1
-        assert result[0].level == "red"
+        assert result == [{"type": "hofuvas", "level": "red"}]
 
     def test_hourly_alert_red_voros(self, parser: AlertParser) -> None:
         """'Vörös' in description → red level."""
@@ -736,8 +759,7 @@ class TestAlertParserHourly:
         """
         soup = BeautifulSoup(html, "html.parser")
         result = parser._parse_hourly_alerts(soup)
-        assert len(result) == 1
-        assert result[0].level == "red"
+        assert result == [{"type": "szel", "level": "red"}]
 
     def test_hourly_alert_no_recognised_level(self, parser: AlertParser) -> None:
         """Description without a recognised level keyword → no alert."""
@@ -782,36 +804,6 @@ class TestAlertParserHourly:
         result = parser._parse_hourly_alerts(soup)
         assert result == []
 
-    def test_hourly_alert_icon_url_leading_slash_prepends_base(
-        self, parser: AlertParser
-    ) -> None:
-        """Icon src starting with '/' gets the idokep base URL prepended."""
-        html = """
-        <div class="genericHourlyAlert">
-            <a class="hover-over" data-bs-content="Sárga riasztás szél miatt">
-                <img class="forecast-alert-icon" src="/icons/wind.png" />
-            </a>
-        </div>
-        """
-        soup = BeautifulSoup(html, "html.parser")
-        result = parser._parse_hourly_alerts(soup)
-        assert result[0].icon_url == "https://www.idokep.hu/icons/wind.png"
-
-    def test_hourly_alert_icon_url_full_url_unchanged(
-        self, parser: AlertParser
-    ) -> None:
-        """Icon src that is already a full URL is kept as-is."""
-        html = """
-        <div class="genericHourlyAlert">
-            <a class="hover-over" data-bs-content="Sárga riasztás szél miatt">
-                <img class="forecast-alert-icon" src="https://cdn.example.com/wind.png" />
-            </a>
-        </div>
-        """
-        soup = BeautifulSoup(html, "html.parser")
-        result = parser._parse_hourly_alerts(soup)
-        assert result[0].icon_url == "https://cdn.example.com/wind.png"
-
     def test_hourly_alert_deduplication(self, parser: AlertParser) -> None:
         """Identical alerts appearing twice are deduplicated."""
         html = """
@@ -827,57 +819,56 @@ class TestAlertParserHourly:
         </div>
         """
         soup = BeautifulSoup(html, "html.parser")
-        result = parser._parse_hourly_alerts(soup)
-        assert len(result) == 1
+        assert parser.parse(soup)["alerts"] == [{"type": "szel", "level": "yellow"}]
 
 
 class TestAlertParserHelpers:
-    """Tests for _extract_alert_type and _organize_by_level."""
-
-    @pytest.fixture
-    def parser(self) -> AlertParser:
-        """Return a fresh AlertParser instance."""
-        return AlertParser()
+    """Tests for _type_from_text and _merge."""
 
     @pytest.mark.parametrize(
         ("description", "expected_type"),
         [
-            ("ónos eső figyelmeztetés", "freezing_rain"),
-            ("ónosesőre vonatkozó riasztás", "freezing_rain"),
-            ("vihar miatt", "storm"),
-            ("zivatar várható", "thunderstorm"),
-            ("szél riasztás", "wind"),
-            ("hó riasztás", "snow"),
-            ("eső riasztás", "rain"),
-            ("köd figyelmeztetés", "fog"),
-            ("hőség riasztás", "heat"),
-            ("hideg riasztás", "cold"),
-            ("fagy riasztás", "frost"),
+            ("Sárga riasztás ónos esőre", "onoseso"),
+            ("ónosesőre vonatkozó riasztás", "onoseso"),
+            ("Sárga riasztás hófúvásra", "hofuvas"),
+            ("Piros riasztás hóvihar miatt", "hofuvas"),
+            ("Narancs riasztás zivatar", "zivatar"),
+            ("Sárga riasztás viharos szélre", "szel"),
+            ("vihar miatt", "szel"),
+            ("Sárga riasztás szélre", "szel"),
+            ("Sárga riasztás esőre", "eso"),
+            ("Sárga figyelmeztetés kiadós esőzésre", "eso"),
+            ("Narancs riasztás havazásra", "ho"),
+            ("Piros figyelmeztetés hó miatt", "ho"),
+            ("Sárga riasztás ködre", "kod"),
+            ("Sárga riasztás fagyra", "fagy"),
+            ("Sárga riasztás extrém hidegre", "fagy"),
+            ("Narancs riasztás hőségre", "meleg"),
+            ("Sárga figyelmeztetés melegre", "meleg"),
         ],
     )
-    def test_extract_alert_type_known(
-        self, parser: AlertParser, description: str, expected_type: str
-    ) -> None:
-        """Known Hungarian keywords map to the correct English type."""
-        assert parser._extract_alert_type(description) == expected_type
+    def test_type_from_text(self, description: str, expected_type: str) -> None:
+        """The text's hazard word gives idokep.hu's own type name."""
+        assert AlertParser._type_from_text(description) == expected_type
 
-    def test_extract_alert_type_unknown_falls_back_to_general(
-        self, parser: AlertParser
-    ) -> None:
-        """Unrecognised description falls back to 'general'."""
-        assert parser._extract_alert_type("unknown weather event") == "general"
+    def test_unknown_type_is_other(self) -> None:
+        """A text without a known hazard word is "other"."""
+        assert AlertParser._type_from_text("Sárga riasztás") == "other"
 
-    def test_organize_by_level(self, parser: AlertParser) -> None:
-        """Alerts are correctly grouped by severity level."""
-        alerts = [
-            AlertData(level="yellow", type="wind", description="szél", icon_url=None),
-            AlertData(level="red", type="storm", description="vihar", icon_url=None),
-            AlertData(level="yellow", type="rain", description="eső", icon_url=None),
+    def test_merge_keeps_each_types_highest_level_in_type_order(self) -> None:
+        """One item per type, at its highest level, in idokep.hu's type order."""
+        items = [
+            {"type": "other", "level": "yellow"},
+            {"type": "eso", "level": "orange"},
+            {"type": "szel", "level": "yellow"},
+            {"type": "eso", "level": "yellow"},
+            {"type": "szel", "level": "red"},
         ]
-        result = parser._organize_by_level(alerts)
-        assert len(result["yellow"]) == 2
-        assert len(result["red"]) == 1
-        assert len(result["orange"]) == 0
+        assert AlertParser._merge(items) == [
+            {"type": "szel", "level": "red"},
+            {"type": "eso", "level": "orange"},
+            {"type": "other", "level": "yellow"},
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -1425,7 +1416,7 @@ class TestPerPageFetchers:
         get_html.assert_awaited_once_with("https://www.idokep.hu/elorejelzes/Budapest")
         assert len(result["hourly_forecast"]) == 1
         assert result["alerts"] == []
-        assert result["alerts_by_level"] == {"yellow": [], "orange": [], "red": []}
+        assert result["warnings"] == []
 
     @pytest.mark.asyncio
     async def test_network_errors_propagate(self, api_client: IdokepApiClient) -> None:
@@ -2201,7 +2192,7 @@ def _alert_cards(alert_hour: int, count: int = 36) -> BeautifulSoup:
 def test_alerts_of_the_first_3_cards_count(alert_hour: int, counted: bool) -> None:
     """An alert on a card after the first 3 is left out."""
     result = AlertParser().parse(_alert_cards(alert_hour))
-    assert bool(result["alerts_by_level"]["red"]) is counted
+    assert result["alerts"] == ([{"type": "szel", "level": "red"}] if counted else [])
 
 
 def test_wind_speed_and_gust_are_the_ends_of_each_level() -> None:
