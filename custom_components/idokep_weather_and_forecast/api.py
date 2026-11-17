@@ -481,7 +481,11 @@ class AlertParser(WeatherParser):
 
     @staticmethod
     def _merge(items: list[dict[str, str]]) -> list[dict[str, str]]:
-        """Return one item per type, at its highest level, in type order."""
+        """
+        Return one item per type, at its highest level.
+
+        Highest level first; items of the same level in type order.
+        """
         highest: dict[str, str] = {}
         for item in items:
             current = highest.get(item["type"], ALERT_NONE)
@@ -489,8 +493,10 @@ class AlertParser(WeatherParser):
                 highest[item["type"]] = item["level"]
         return [
             {"type": alert_type, "level": highest[alert_type]}
-            for alert_type in ALERT_TYPES
-            if alert_type in highest
+            for alert_type in sorted(
+                highest,
+                key=lambda t: (-ALERT_LEVELS.index(highest[t]), ALERT_TYPES.index(t)),
+            )
         ]
 
 

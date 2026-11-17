@@ -47,7 +47,7 @@ Minden felvett bejegyzéshez (településhez) az alábbiak jönnek létre. A `<N
 | Figyelmeztetés mára | szenzor (felsorolás) | az oldal tetején lévő sáv(ok) legmagasabb szintje, amely riasztás vagy figyelmeztetés is lehet: Nincs figyelmeztetés, Sárga, Narancs vagy Piros figyelmeztetés. A `warnings` attribútum az érvényes figyelmeztetéseket sorolja fel |
 | Vihar várható egy órán belül | bináris szenzor | bekapcsol, ha az aktuális vagy a következő óra viharos (zivatar, száraz zivatar, villámlás, eső viharos széllel, porvihar); az oldal óránkénti letöltésekor frissül |
 
-Az `alerts` és a `warnings` attribútum csak az érvényben lévő típusokat tartalmazza (típusonként a legmagasabb szinttel), például:
+Az `alerts` és a `warnings` attribútum csak az érvényben lévő típusokat tartalmazza, típusonként a legmagasabb szinttel. Elöl a legmagasabb szint áll, az azonos szintűek a lenti típussorrendben követik egymást, például:
 
 ```yaml
 alerts:

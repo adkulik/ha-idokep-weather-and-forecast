@@ -693,8 +693,8 @@ class TestAlertParserWarning:
         )
         result = parser.parse(BeautifulSoup(html, "html.parser"))
         assert result["warnings"] == [
-            {"type": "freezing_rain", "level": "yellow"},
             {"type": "blowing_snow", "level": "orange"},
+            {"type": "freezing_rain", "level": "yellow"},
         ]
         assert result["warning_level"] == "orange"
 
@@ -855,18 +855,23 @@ class TestAlertParserHelpers:
         """A text without a known hazard word is "other"."""
         assert AlertParser._type_from_text("Sárga riasztás") == "other"
 
-    def test_merge_keeps_each_types_highest_level_in_type_order(self) -> None:
-        """One item per type, at its highest level, in idokep.hu's type order."""
+    def test_merge_keeps_each_types_highest_level_highest_first(self) -> None:
+        """One item per type at its highest level; highest first, then type order."""
         items = [
             {"type": "other", "level": "yellow"},
-            {"type": "rain", "level": "orange"},
-            {"type": "wind", "level": "yellow"},
+            {"type": "fog", "level": "yellow"},
+            {"type": "heat", "level": "orange"},
+            {"type": "thunderstorm", "level": "yellow"},
             {"type": "rain", "level": "yellow"},
+            {"type": "rain", "level": "orange"},
             {"type": "wind", "level": "red"},
         ]
         assert AlertParser._merge(items) == [
             {"type": "wind", "level": "red"},
             {"type": "rain", "level": "orange"},
+            {"type": "heat", "level": "orange"},
+            {"type": "thunderstorm", "level": "yellow"},
+            {"type": "fog", "level": "yellow"},
             {"type": "other", "level": "yellow"},
         ]
 

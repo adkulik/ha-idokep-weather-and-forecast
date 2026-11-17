@@ -73,7 +73,7 @@ class TestAlertParser:
         parser = AlertParser()
         result = parser.parse(soup)
 
-        # In idokep.hu's type order: thunderstorm before wind
+        # Highest level first
         assert result["alerts"] == [
             {"type": "thunderstorm", "level": "orange"},
             {"type": "wind", "level": "yellow"},
@@ -103,8 +103,8 @@ class TestAlertParser:
         result = parser.parse(soup)
 
         assert result["alerts"] == [
-            {"type": "thunderstorm", "level": "orange"},
             {"type": "wind", "level": "red"},
+            {"type": "thunderstorm", "level": "orange"},
         ]
         assert result["warnings"] == [{"type": "wind", "level": "yellow"}]
         assert result["warning_level"] == "yellow"
