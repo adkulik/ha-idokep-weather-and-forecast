@@ -119,13 +119,13 @@ class TestIdokepSensorEntityDescriptions:
         [
             (None, None),  # the forecast page isn't read yet: unknown
             ([], "none"),
-            ([{"type": "kod", "level": "yellow"}], "yellow"),
+            ([{"type": "fog", "level": "yellow"}], "yellow"),
             (
-                [{"type": "szel", "level": "orange"}, {"type": "kod", "level": "yellow"}],
+                [{"type": "wind", "level": "orange"}, {"type": "fog", "level": "yellow"}],
                 "orange",
             ),
             (
-                [{"type": "zivatar", "level": "red"}, {"type": "eso", "level": "yellow"}],
+                [{"type": "thunderstorm", "level": "red"}, {"type": "rain", "level": "yellow"}],
                 "red",
             ),
         ],
@@ -151,8 +151,8 @@ class TestIdokepSensorEntityDescriptions:
         desc = next(d for d in ENTITY_DESCRIPTIONS if d.key == key)
         mock_coordinator.data = {
             attribute: [
-                {"type": "szel", "level": "orange"},
-                {"type": "kod", "level": "yellow"},
+                {"type": "wind", "level": "orange"},
+                {"type": "fog", "level": "yellow"},
             ]
         }
         sensor = IdokepSensor(mock_coordinator, desc)
@@ -165,7 +165,7 @@ class TestIdokepSensorEntityDescriptions:
         with patch(
             "custom_components.idokep_weather_and_forecast.sensor."
             "translation.async_get_cached_translations",
-            return_value={f"{prefix}.szel": "Szél"},
+            return_value={f"{prefix}.wind": "Szél"},
         ) as get_translations:
             attributes = sensor.extra_state_attributes
         get_translations.assert_called_with(
@@ -173,9 +173,9 @@ class TestIdokepSensorEntityDescriptions:
         )
         assert attributes == {
             attribute: [
-                {"label": "Szél", "type": "szel", "level": "orange"},
+                {"label": "Szél", "type": "wind", "level": "orange"},
                 # No translation: the type itself
-                {"label": "kod", "type": "kod", "level": "yellow"},
+                {"label": "fog", "type": "fog", "level": "yellow"},
             ]
         }
 
@@ -193,7 +193,7 @@ class TestIdokepSensorEntityDescriptions:
     ) -> None:
         """Only the alert sensors have the attribute."""
         desc = next(d for d in ENTITY_DESCRIPTIONS if d.key == "temperature")
-        mock_coordinator.data = {"alerts": [{"type": "kod", "level": "yellow"}]}
+        mock_coordinator.data = {"alerts": [{"type": "fog", "level": "yellow"}]}
         assert IdokepSensor(mock_coordinator, desc).extra_state_attributes is None
 
     @pytest.mark.parametrize(

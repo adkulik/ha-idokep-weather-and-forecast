@@ -671,9 +671,9 @@ class TestAlertParserWarning:
     @pytest.mark.parametrize(
         ("text", "warnings"),
         [
-            ("Sárga riasztás viharos szélre", [{"type": "szel", "level": "yellow"}]),
-            ("Sárga figyelmeztetés zivatarra", [{"type": "zivatar", "level": "yellow"}]),
-            ("Piros figyelmeztetés hó miatt", [{"type": "ho", "level": "red"}]),
+            ("Sárga riasztás viharos szélre", [{"type": "wind", "level": "yellow"}]),
+            ("Sárga figyelmeztetés zivatarra", [{"type": "thunderstorm", "level": "yellow"}]),
+            ("Piros figyelmeztetés hó miatt", [{"type": "snow", "level": "red"}]),
             ("Figyelmeztetés", []),
         ],
     )
@@ -693,8 +693,8 @@ class TestAlertParserWarning:
         )
         result = parser.parse(BeautifulSoup(html, "html.parser"))
         assert result["warnings"] == [
-            {"type": "onoseso", "level": "yellow"},
-            {"type": "hofuvas", "level": "orange"},
+            {"type": "freezing_rain", "level": "yellow"},
+            {"type": "blowing_snow", "level": "orange"},
         ]
         assert result["warning_level"] == "orange"
 
@@ -719,7 +719,7 @@ class TestAlertParserHourly:
         soup = BeautifulSoup(html, "html.parser")
         result = parser._parse_hourly_alerts(soup)
         assert len(result) == 1
-        assert result[0] == {"type": "szel", "level": "yellow"}
+        assert result[0] == {"type": "wind", "level": "yellow"}
 
     def test_hourly_alert_orange_narancs(self, parser: AlertParser) -> None:
         """'Narancs' in description → orange level."""
@@ -733,7 +733,7 @@ class TestAlertParserHourly:
         soup = BeautifulSoup(html, "html.parser")
         result = parser._parse_hourly_alerts(soup)
         assert len(result) == 1
-        assert result[0] == {"type": "eso", "level": "orange"}
+        assert result[0] == {"type": "rain", "level": "orange"}
 
     def test_hourly_alert_red_piros(self, parser: AlertParser) -> None:
         """'Piros' in description → red level."""
@@ -746,7 +746,7 @@ class TestAlertParserHourly:
         """
         soup = BeautifulSoup(html, "html.parser")
         result = parser._parse_hourly_alerts(soup)
-        assert result == [{"type": "hofuvas", "level": "red"}]
+        assert result == [{"type": "blowing_snow", "level": "red"}]
 
     def test_hourly_alert_red_voros(self, parser: AlertParser) -> None:
         """'Vörös' in description → red level."""
@@ -759,7 +759,7 @@ class TestAlertParserHourly:
         """
         soup = BeautifulSoup(html, "html.parser")
         result = parser._parse_hourly_alerts(soup)
-        assert result == [{"type": "szel", "level": "red"}]
+        assert result == [{"type": "wind", "level": "red"}]
 
     def test_hourly_alert_no_recognised_level(self, parser: AlertParser) -> None:
         """Description without a recognised level keyword → no alert."""
@@ -819,7 +819,7 @@ class TestAlertParserHourly:
         </div>
         """
         soup = BeautifulSoup(html, "html.parser")
-        assert parser.parse(soup)["alerts"] == [{"type": "szel", "level": "yellow"}]
+        assert parser.parse(soup)["alerts"] == [{"type": "wind", "level": "yellow"}]
 
 
 class TestAlertParserHelpers:
@@ -828,23 +828,23 @@ class TestAlertParserHelpers:
     @pytest.mark.parametrize(
         ("description", "expected_type"),
         [
-            ("Sárga riasztás ónos esőre", "onoseso"),
-            ("ónosesőre vonatkozó riasztás", "onoseso"),
-            ("Sárga riasztás hófúvásra", "hofuvas"),
-            ("Piros riasztás hóvihar miatt", "hofuvas"),
-            ("Narancs riasztás zivatar", "zivatar"),
-            ("Sárga riasztás viharos szélre", "szel"),
-            ("vihar miatt", "szel"),
-            ("Sárga riasztás szélre", "szel"),
-            ("Sárga riasztás esőre", "eso"),
-            ("Sárga figyelmeztetés kiadós esőzésre", "eso"),
-            ("Narancs riasztás havazásra", "ho"),
-            ("Piros figyelmeztetés hó miatt", "ho"),
-            ("Sárga riasztás ködre", "kod"),
-            ("Sárga riasztás fagyra", "fagy"),
-            ("Sárga riasztás extrém hidegre", "fagy"),
-            ("Narancs riasztás hőségre", "meleg"),
-            ("Sárga figyelmeztetés melegre", "meleg"),
+            ("Sárga riasztás ónos esőre", "freezing_rain"),
+            ("ónosesőre vonatkozó riasztás", "freezing_rain"),
+            ("Sárga riasztás hófúvásra", "blowing_snow"),
+            ("Piros riasztás hóvihar miatt", "blowing_snow"),
+            ("Narancs riasztás zivatar", "thunderstorm"),
+            ("Sárga riasztás viharos szélre", "wind"),
+            ("vihar miatt", "wind"),
+            ("Sárga riasztás szélre", "wind"),
+            ("Sárga riasztás esőre", "rain"),
+            ("Sárga figyelmeztetés kiadós esőzésre", "rain"),
+            ("Narancs riasztás havazásra", "snow"),
+            ("Piros figyelmeztetés hó miatt", "snow"),
+            ("Sárga riasztás ködre", "fog"),
+            ("Sárga riasztás fagyra", "frost"),
+            ("Sárga riasztás extrém hidegre", "frost"),
+            ("Narancs riasztás hőségre", "heat"),
+            ("Sárga figyelmeztetés melegre", "heat"),
         ],
     )
     def test_type_from_text(self, description: str, expected_type: str) -> None:
@@ -859,14 +859,14 @@ class TestAlertParserHelpers:
         """One item per type, at its highest level, in idokep.hu's type order."""
         items = [
             {"type": "other", "level": "yellow"},
-            {"type": "eso", "level": "orange"},
-            {"type": "szel", "level": "yellow"},
-            {"type": "eso", "level": "yellow"},
-            {"type": "szel", "level": "red"},
+            {"type": "rain", "level": "orange"},
+            {"type": "wind", "level": "yellow"},
+            {"type": "rain", "level": "yellow"},
+            {"type": "wind", "level": "red"},
         ]
         assert AlertParser._merge(items) == [
-            {"type": "szel", "level": "red"},
-            {"type": "eso", "level": "orange"},
+            {"type": "wind", "level": "red"},
+            {"type": "rain", "level": "orange"},
             {"type": "other", "level": "yellow"},
         ]
 
@@ -2192,7 +2192,7 @@ def _alert_cards(alert_hour: int, count: int = 36) -> BeautifulSoup:
 def test_alerts_of_the_first_3_cards_count(alert_hour: int, counted: bool) -> None:
     """An alert on a card after the first 3 is left out."""
     result = AlertParser().parse(_alert_cards(alert_hour))
-    assert result["alerts"] == ([{"type": "szel", "level": "red"}] if counted else [])
+    assert result["alerts"] == ([{"type": "wind", "level": "red"}] if counted else [])
 
 
 def test_wind_speed_and_gust_are_the_ends_of_each_level() -> None:

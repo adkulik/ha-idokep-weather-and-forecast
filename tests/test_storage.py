@@ -42,8 +42,8 @@ FORECAST_DATA = {
     "wind_gust_speed": 28,
     "precipitation": 0.81,
     "precipitation_probability": 25,
-    "alerts": [{"type": "szel", "level": "yellow"}],
-    "warnings": [{"type": "zivatar", "level": "orange"}],
+    "alerts": [{"type": "wind", "level": "yellow"}],
+    "warnings": [{"type": "thunderstorm", "level": "orange"}],
     "warning_level": "orange",
     "daily_forecast": [
         {"datetime": "2026-10-28", "temperature": 15},
@@ -84,19 +84,22 @@ def test_serialize_returns_a_json_safe_copy() -> None:
     json.dumps(data)  # must not raise
 
 
-def test_restore_drops_alerts_of_older_versions() -> None:
-    """Alerts saved in the old form (English types, extra fields) are dropped."""
+def test_restore_keeps_only_valid_alerts() -> None:
+    """Saved alerts come back as {"type", "level"}; unknown types are dropped."""
     data = {
         "alerts": [
+            # As saved by 1.12.0 and earlier: extra fields
             {"level": "yellow", "type": "wind", "description": "Szél", "icon_url": None},
-            {"type": "kod", "level": "yellow", "description": "Köd"},
-            {"type": "kod", "level": "none"},
+            {"level": "red", "type": "storm", "description": "Vihar", "icon_url": None},
+            # As saved by 1.12.1: Hungarian type names
+            {"type": "kod", "level": "yellow"},
+            {"type": "fog", "level": "none"},
             "not an alert",
         ],
         "alerts_by_level": {"yellow": [{"type": "wind"}], "orange": [], "red": []},
     }
     result = restore(HOURLY, saved(data, NOW - timedelta(minutes=5)), NOW)
-    assert result["alerts"] == [{"type": "kod", "level": "yellow"}]
+    assert result["alerts"] == [{"type": "wind", "level": "yellow"}]
     assert "alerts_by_level" not in result
 
 

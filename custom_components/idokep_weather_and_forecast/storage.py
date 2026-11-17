@@ -121,7 +121,8 @@ def _valid_alerts(items: list[Any]) -> list[dict[str, str]]:
     """
     Return the saved alerts in the current form.
 
-    Alerts saved by older versions (other types, extra fields) are dropped.
+    Extra fields saved by older versions are left out, and alerts of
+    unknown types (older versions' type names) are dropped.
     """
     return [
         {"type": item["type"], "level": item["level"]}

@@ -52,12 +52,12 @@ Az `alerts` és a `warnings` attribútum csak az érvényben lévő típusokat t
 ```yaml
 alerts:
   - label: Szél
-    type: szel
+    type: wind
     level: yellow
 ```
 
 - `label`: a típus neve a Home Assistant nyelvén
-- `type`: az idokep.hu saját típusneve: `zivatar` (zivatar), `szel` (szél), `eso` (eső), `onoseso` (ónos eső), `hofuvas` (hófúvás), `ho` (havazás), `kod` (köd), `fagy` (fagy), `meleg` (hőség); `other`, ha a szövegből nem derül ki
+- `type`: az idokep.hu saját típusneve angolul: `thunderstorm` (zivatar), `wind` (szél), `rain` (eső), `freezing_rain` (ónos eső), `blowing_snow` (hófúvás), `snow` (havazás), `fog` (köd), `frost` (fagy), `heat` (hőség); `other`, ha a szövegből nem derül ki
 - `level`: `yellow`, `orange` vagy `red`
 
 A páratartalom, a harmatpont, a hőérzet, a légnyomás és az UV-B index „nem elérhető”, ha a településnek nincs ilyen értéket mérő állomása.

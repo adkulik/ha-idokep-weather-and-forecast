@@ -51,7 +51,7 @@ class TestAlertParser:
         parser = AlertParser()
         result = parser.parse(soup)
 
-        assert result["alerts"] == [{"type": "onoseso", "level": "yellow"}]
+        assert result["alerts"] == [{"type": "freezing_rain", "level": "yellow"}]
 
     def test_parse_multiple_hourly_alerts(self) -> None:
         """Test parsing multiple different hourly alerts."""
@@ -75,8 +75,8 @@ class TestAlertParser:
 
         # In idokep.hu's type order: thunderstorm before wind
         assert result["alerts"] == [
-            {"type": "zivatar", "level": "orange"},
-            {"type": "szel", "level": "yellow"},
+            {"type": "thunderstorm", "level": "orange"},
+            {"type": "wind", "level": "yellow"},
         ]
 
     def test_alerts_and_warnings_are_separate(self) -> None:
@@ -103,10 +103,10 @@ class TestAlertParser:
         result = parser.parse(soup)
 
         assert result["alerts"] == [
-            {"type": "zivatar", "level": "orange"},
-            {"type": "szel", "level": "red"},
+            {"type": "thunderstorm", "level": "orange"},
+            {"type": "wind", "level": "red"},
         ]
-        assert result["warnings"] == [{"type": "szel", "level": "yellow"}]
+        assert result["warnings"] == [{"type": "wind", "level": "yellow"}]
         assert result["warning_level"] == "yellow"
 
     def test_no_alerts(self) -> None:
@@ -134,7 +134,7 @@ class TestAlertParser:
         parser = AlertParser()
         result = parser.parse(soup)
 
-        assert result["alerts"] == [{"type": "meleg", "level": "orange"}]
+        assert result["alerts"] == [{"type": "heat", "level": "orange"}]
 
     def test_alert_type_extraction_fog(self) -> None:
         """Test alert type extraction for fog warning."""
@@ -147,7 +147,7 @@ class TestAlertParser:
         parser = AlertParser()
         result = parser.parse(soup)
 
-        assert result["alerts"] == [{"type": "kod", "level": "yellow"}]
+        assert result["alerts"] == [{"type": "fog", "level": "yellow"}]
 
     def test_duplicate_alerts_removed(self) -> None:
         """Test that duplicate alerts are not added multiple times."""

@@ -364,17 +364,17 @@ ALERT_NONE = "none"
 ALERT_LEVELS = [ALERT_NONE, "yellow", "orange", "red"]
 
 # Alert types: idokep.hu's own type names (as in its /api/current_weather
-# data), in its order; "other" for a text no type matches
+# data) in English, in its order; "other" for a text no type matches
 ALERT_TYPES = [
-    "zivatar",  # thunderstorm
-    "szel",  # wind
-    "eso",  # rain
-    "onoseso",  # freezing rain
-    "hofuvas",  # blowing snow
-    "ho",  # snow
-    "kod",  # fog
-    "fagy",  # frost
-    "meleg",  # heat
+    "thunderstorm",  # zivatar
+    "wind",  # szel
+    "rain",  # eso
+    "freezing_rain",  # onoseso
+    "blowing_snow",  # hofuvas
+    "snow",  # ho
+    "fog",  # kod
+    "frost",  # fagy
+    "heat",  # meleg
     "other",
 ]
 
@@ -390,15 +390,15 @@ class AlertParser(WeatherParser):
     # Words of an alert text (lower case) and their type, checked in order:
     # "ónos eső" before "eső", "hófúvás" and "hóvihar" before "hó" and "vihar"
     _TYPE_WORDS: ClassVar[list[tuple[tuple[str, ...], str]]] = [
-        (("ónos",), "onoseso"),
-        (("hófúvás", "hóvihar"), "hofuvas"),
-        (("zivatar",), "zivatar"),
-        (("szél", "vihar"), "szel"),
-        (("eső",), "eso"),
-        (("havaz", "hó"), "ho"),
-        (("köd",), "kod"),
-        (("fagy", "hideg"), "fagy"),
-        (("hőség", "meleg"), "meleg"),
+        (("ónos",), "freezing_rain"),
+        (("hófúvás", "hóvihar"), "blowing_snow"),
+        (("zivatar",), "thunderstorm"),
+        (("szél", "vihar"), "wind"),
+        (("eső",), "rain"),
+        (("havaz", "hó"), "snow"),
+        (("köd",), "fog"),
+        (("fagy", "hideg"), "frost"),
+        (("hőség", "meleg"), "heat"),
     ]
 
     def parse(self, soup: BeautifulSoup) -> dict[str, Any]:
