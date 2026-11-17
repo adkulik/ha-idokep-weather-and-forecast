@@ -348,9 +348,10 @@ class TestIdokepApiClientWeatherScraping:
         ):
             result = await api_client.async_get_current_weather("Budapest")
 
-        assert set(result) == {"temperature", "condition"}
+        assert set(result) == {"temperature", "condition", "cloud_coverage"}
         assert result["temperature"] == 22
         assert result["condition"] == "sunny"
+        assert result["cloud_coverage"] == 0
 
     @pytest.mark.asyncio
     async def test_scrape_hourly_forecast_success(
@@ -578,6 +579,9 @@ class TestIdokepApiClientWeatherScraping:
         if isinstance(col, Tag):
             condition = api_client._daily_parser.extract_condition(col)
             assert condition == "rainy"
+            item = api_client._daily_parser._parse_daily_column(col, dt.date(2026, 11, 17))
+            assert item["condition"] == "rainy"
+            assert item["cloud_coverage"] == 100
 
     def test_extract_daily_condition_fallback_match(
         self, api_client: IdokepApiClient
@@ -2276,3 +2280,51 @@ def test_hourly_condition_at_night(
 def test_clear_night_is_a_known_condition() -> None:
     """The Condition sensor's options include it, though no page text maps to it."""
     assert "clear-night" in WeatherConditionMapper.conditions()
+
+
+# ---- cloud coverage -----------------------------------------------------------------
+
+
+def test_every_description_has_a_cloud_coverage() -> None:
+    """Each known description has an estimate of 0, 25, 50, 75 or 100 %."""
+    mapper = WeatherConditionMapper
+    assert set(mapper._CLOUD_COVERAGE) == set(mapper._CONDITION_MAPPING)
+    assert set(mapper._CLOUD_COVERAGE.values()) <= {0, 25, 50, 75, 100}
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Derült", 0),
+        ("gyengén felhős", 25),
+        ("közepesen felhős", 50),
+        ("erősen felhős", 75),
+        ("borult", 100),
+        (" Eső ", 100),
+        ("zivatar", 75),
+        ("párás", 50),
+        ("ismeretlen", None),
+        (None, None),
+    ],
+)
+def test_cloud_coverage(text: str | None, expected: int | None) -> None:
+    """The estimate comes from the Hungarian text, any case."""
+    assert WeatherConditionMapper.cloud_coverage(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"), [("gyengén felhős", 25), ("hózápor", 75), (None, None)]
+)
+def test_hourly_cloud_coverage(text: str | None, expected: int | None) -> None:
+    """Each hour has the cloud coverage of its description."""
+    link = "" if text is None else f'<a data-bs-content="{text}"></a>'
+    card = BeautifulSoup(
+        '<div class="ik wide-hourly-forecast-card">'
+        '<div class="ik wide-hourly-forecast-hour">14:00</div>'
+        '<div class="ik tempValue"><a>5</a></div>'
+        f'<div class="forecast-icon-container">{link}</div></div>',
+        "html.parser",
+    ).find("div")
+    hour = card.find("div", class_="ik wide-hourly-forecast-hour")
+    item = HourlyForecastParser()._parse_hourly_card(card, hour, dt.date(2026, 11, 17))
+    assert item["cloud_coverage"] == expected

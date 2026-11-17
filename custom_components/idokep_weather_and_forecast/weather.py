@@ -125,6 +125,11 @@ class IdokepWeatherEntity(IdokepEntity, WeatherEntity):
         return self.coordinator.data.get("humidity")
 
     @property
+    def cloud_coverage(self) -> int | None:
+        """Return the cloud coverage (%), estimated from the description."""
+        return self.coordinator.data.get("cloud_coverage")
+
+    @property
     def native_dew_point(self) -> float | None:
         """Return the average dew point of the settlement's stations (°C)."""
         return self.coordinator.data.get("dew_point")

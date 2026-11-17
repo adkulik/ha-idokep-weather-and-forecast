@@ -117,6 +117,52 @@ class WeatherConditionMapper:
         "szeles": "windy",
     }
 
+    # Estimated cloud coverage (%) of each description. The cloud words follow
+    # the eighths of the sky (derült 0-1/8 ... borult 8/8); continuous rain,
+    # snow and fog mean an overcast sky, showers and storms broken clouds;
+    # 50 where the text says nothing about the clouds.
+    _CLOUD_COVERAGE: ClassVar[dict[str, int]] = {
+        "napos": 0,
+        "derült": 0,
+        "gyengén felhős": 25,
+        "közepesen felhős": 50,
+        "erősen felhős": 75,
+        "borult": 100,
+        "szitálás": 100,
+        "gyenge eső": 100,
+        "eső": 100,
+        "erős eső": 100,
+        "eső viharos széllel": 100,
+        "zápor": 75,
+        "zivatar": 75,
+        "száraz zivatar": 75,
+        "villámlás": 75,
+        "jégeső": 75,
+        "hószállingózás": 100,
+        "havazás": 100,
+        "intenzív havazás": 100,
+        "hófúvás havazással": 100,
+        "havas eső": 100,
+        "fagyott eső": 100,
+        "ónos eső": 100,
+        "hózápor": 75,
+        "hófúvás": 50,
+        "köd": 100,
+        "ködös": 100,
+        "ködszitálás": 100,
+        "párás": 50,
+        "pára": 50,
+        "szeles": 50,
+        "porvihar": 50,
+    }
+
+    @classmethod
+    def cloud_coverage(cls, condition: str | None) -> int | None:
+        """Return the estimated cloud coverage (%) of a Hungarian description."""
+        if condition is None:
+            return None
+        return cls._CLOUD_COVERAGE.get(condition.strip().lower())
+
     @classmethod
     def map_condition(cls, condition: str) -> str:
         """Map Hungarian condition to Home Assistant standard condition."""
@@ -319,6 +365,7 @@ class CurrentWeatherParser(WeatherParser):
         if isinstance(cond_div, Tag):
             condition = cond_div.text.strip()
             result["condition"] = WeatherConditionMapper.map_condition(condition)
+            result["cloud_coverage"] = WeatherConditionMapper.cloud_coverage(condition)
 
         return result
 
@@ -637,6 +684,9 @@ class HourlyForecastParser(WeatherParser):
                 "datetime": slot_start.isoformat(),
                 "temperature": temp,
                 "condition": condition,
+                "cloud_coverage": WeatherConditionMapper.cloud_coverage(
+                    self._condition_text(card)
+                ),
                 "precipitation": self.extract_precipitation_amount(card),
                 "precipitation_probability": precipitation_probability,
                 "wind_bearing": self.extract_wind_bearing(card),
@@ -914,7 +964,8 @@ class DailyForecastParser(WeatherParser):
     def _parse_daily_column(self, col: Tag, forecast_date: dt.date) -> dict[str, Any]:
         """Parse individual daily forecast column."""
         min_temp, max_temp = self.extract_temperatures(col)
-        condition = self.extract_condition(col)
+        text = self._condition_text(col)
+        condition = WeatherConditionMapper.map_condition(text) if text else None
         precipitation = self.extract_precipitation(col)
 
         return {
@@ -922,6 +973,7 @@ class DailyForecastParser(WeatherParser):
             "temperature": max_temp,
             "templow": min_temp,
             "condition": condition,
+            "cloud_coverage": WeatherConditionMapper.cloud_coverage(text),
             "precipitation": precipitation,
             # The page shows none per day; set from the day's hours
             # (set_daily_probabilities), None while no hour of the day is shown
@@ -967,6 +1019,12 @@ class DailyForecastParser(WeatherParser):
 
     def extract_condition(self, col: Tag) -> str | None:
         """Extract weather condition from column."""
+        text = self._condition_text(col)
+        return WeatherConditionMapper.map_condition(text) if text else None
+
+    @staticmethod
+    def _condition_text(col: Tag) -> str | None:
+        """Return the day's Hungarian description from the column's popover."""
         icon_alert = col.find("div", class_="ik dfIconAlert")
         if not (icon_alert and isinstance(icon_alert, Tag)):
             return None
@@ -990,12 +1048,12 @@ class DailyForecastParser(WeatherParser):
         if alt_match:
             condition_text = (alt_match.group(1) or alt_match.group(2) or "").strip()
             if condition_text:
-                return WeatherConditionMapper.map_condition(condition_text)
+                return condition_text
 
         # Fallback: grab text immediately after any forecast icon img closing >
         text_match = re.search(r"forecastIcons/[^>]+>([^<]+)", popover)
         if text_match:
-            return WeatherConditionMapper.map_condition(text_match.group(1).strip())
+            return text_match.group(1).strip()
 
         return None
 

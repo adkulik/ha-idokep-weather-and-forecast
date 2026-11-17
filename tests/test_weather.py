@@ -167,9 +167,11 @@ class TestIdokepWeatherEntity:
             "dew_point": 2.25,
             "pressure": 1029.2,
             "uv_index": 0.25,
+            "cloud_coverage": 75,
         }
         entity = IdokepWeatherEntity(mock_coordinator)
         assert entity.uv_index == 0.25
+        assert entity.cloud_coverage == 75
         assert entity.humidity == 59.5
         assert entity.native_dew_point == 2.25
         assert entity.native_pressure == 1029.2
