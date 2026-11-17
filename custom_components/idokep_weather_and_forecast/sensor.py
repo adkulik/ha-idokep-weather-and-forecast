@@ -129,6 +129,13 @@ ENTITY_DESCRIPTIONS = (
         device_class=SensorDeviceClass.ENUM,
         options=WeatherConditionMapper.conditions(),
     ),
+    # Estimated from the condition's Hungarian description (0/25/50/75/100 %)
+    SensorEntityDescription(
+        key="cloud_coverage",
+        translation_key="cloud_coverage",
+        native_unit_of_measurement=PERCENTAGE,
+        suggested_display_precision=DISPLAY_PRECISION,
+    ),
     SensorEntityDescription(
         key="wind_bearing",
         translation_key="wind_bearing",

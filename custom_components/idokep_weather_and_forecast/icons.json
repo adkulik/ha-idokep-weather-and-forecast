@@ -26,6 +26,9 @@
           "windy": "mdi:weather-windy"
         }
       },
+      "cloud_coverage": {
+        "default": "mdi:weather-cloudy"
+      },
       "wind_bearing": {
         "default": "mdi:compass-outline"
       },

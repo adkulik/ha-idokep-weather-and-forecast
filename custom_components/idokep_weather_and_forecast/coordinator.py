@@ -44,7 +44,13 @@ REQUIRED_KEYS = {
 # The entities reading each page, by the end of their unique ID. Needed at
 # startup, before the entities listen, and for the sensors' listener contexts.
 SOURCE_ENTITIES = {
-    CURRENT: ("weather", "temperature", "condition", "apparent_temperature"),
+    CURRENT: (
+        "weather",
+        "temperature",
+        "condition",
+        "cloud_coverage",
+        "apparent_temperature",
+    ),
     HOURLY: (
         "weather",
         "apparent_temperature",

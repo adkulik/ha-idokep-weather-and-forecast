@@ -38,6 +38,7 @@ SENSOR_SOURCES = {
     "temperature_max_today": HOURLY,
     "temperature_min_today": HOURLY,
     "condition": CURRENT,
+    "cloud_coverage": CURRENT,
     "wind_bearing": HOURLY,
     "wind_direction": HOURLY,
     "wind_strength": HOURLY,

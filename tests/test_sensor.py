@@ -38,7 +38,7 @@ class TestIdokepSensorEntityDescriptions:
 
     def test_entity_descriptions_count(self) -> None:
         """Test that we have the expected number of entity descriptions."""
-        assert len(ENTITY_DESCRIPTIONS) == 18
+        assert len(ENTITY_DESCRIPTIONS) == 19
 
     def test_entity_descriptions_keys(self) -> None:
         """Test that entity descriptions have the expected keys."""
@@ -47,6 +47,7 @@ class TestIdokepSensorEntityDescriptions:
             "temperature_max_today",
             "temperature_min_today",
             "condition",
+            "cloud_coverage",
             "wind_bearing",
             "wind_direction",
             "wind_strength",
@@ -85,6 +86,19 @@ class TestIdokepSensorEntityDescriptions:
         assert desc.native_unit_of_measurement == unit
         assert desc.suggested_display_precision == 1
         assert desc.state_class is None
+
+    @pytest.mark.parametrize(
+        ("data", "expected"),
+        [({}, None), ({"cloud_coverage": 0}, 0), ({"cloud_coverage": 75}, 75)],
+    )
+    def test_cloud_coverage(
+        self, mock_coordinator: Mock, data: dict, expected: int | None
+    ) -> None:
+        """The estimate from the current description; unknown without one."""
+        desc = next(d for d in ENTITY_DESCRIPTIONS if d.key == "cloud_coverage")
+        assert desc.native_unit_of_measurement == "%"
+        mock_coordinator.data = data
+        assert IdokepSensor(mock_coordinator, desc).native_value == expected
 
     @pytest.mark.parametrize(
         ("data", "expected"),

@@ -28,6 +28,7 @@ Minden felvett bejegyzéshez (településhez) az alábbiak jönnek létre. A `<N
 | `<Név> Előrejelzés` | időjárás | aktuális állapot, hőmérséklet, szél, becsült széllökés (a Beaufort-fokozat felső határa), páratartalom, harmatpont, hőérzet, légnyomás, UV-index, becsült felhőzet (%), az aktuális óra csapadéka (`precipitation` attribútum, mm); óránkénti és napi előrejelzés (felhőzettel) |
 | Hőmérséklet | szenzor (°C) | aktuális |
 | Állapot | szenzor (felsorolás) | pl. napos, derült éjszaka (napnyugta után), borult, eső |
+| Felhőzet | szenzor (%) | **becslés** az aktuális állapot leírásából (0, 25, 50, 75 vagy 100%; lásd lent) |
 | Mai maximum hőmérséklet | szenzor (°C) | a napi előrejelzésből, éjfélig megmarad |
 | Mai minimum hőmérséklet | szenzor (°C) | a napi előrejelzésből, éjfélig megmarad |
 | Szélirány (fok) | szenzor (°) | az aktuális óra előrejelzéséből |
@@ -48,7 +49,7 @@ Minden felvett bejegyzéshez (településhez) az alábbiak jönnek létre. A `<N
 
 A páratartalom, a harmatpont, a hőérzet, a légnyomás és az UV-B index „nem elérhető”, ha a településnek nincs ilyen értéket mérő állomása.
 
-Az időjárás entitás felhőzete (`cloud_coverage`) **becslés** az idokep.hu állapotleírásából, mert az oldal nem ad számszerű értéket. A felhőszavak a nyolcadokat követik: derült és napos 0%, gyengén felhős 25%, közepesen felhős 50%, erősen felhős 75%, borult 100%. A tartós eső, hó, ónos eső és köd 100%, a zápor, hózápor, zivatar, villámlás és jégeső 75%, a felhőzetről semmit nem mondó leírások (párás, pára, szeles, hófúvás, porvihar) 50%. Ismeretlen leírásnál nincs érték.
+A Felhőzet szenzor és az időjárás entitás felhőzete (`cloud_coverage`) **becslés** az idokep.hu állapotleírásából, mert az oldal nem ad számszerű értéket. A felhőszavak a nyolcadokat követik: derült és napos 0%, gyengén felhős 25%, közepesen felhős 50%, erősen felhős 75%, borult 100%. A tartós eső, hó, ónos eső és köd 100%, a zápor, hózápor, zivatar, villámlás és jégeső 75%, a felhőzetről semmit nem mondó leírások (párás, pára, szeles, hófúvás, porvihar) 50%. Ismeretlen leírásnál nincs érték.
 
 ### `<Név> Időjárás` – Current weather (csak állomáskóddal)
 
