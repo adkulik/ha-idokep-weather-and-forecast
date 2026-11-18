@@ -137,9 +137,10 @@ async def async_setup_entry(
     _remove_old_alert_sensors(hass, entry)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    # Check the per-page schedules at every whole minute (hh:mm:00)
+    # Check the per-page schedules every minute at second 59 (fetches on
+    # x:00:59, x:10:59, ...)
     entry.async_on_unload(
-        async_track_time_change(hass, coordinator.async_tick, second=0)
+        async_track_time_change(hass, coordinator.async_tick, second=59)
     )
     if station is not None:
         # Station: every minute at second 59 (fetches on x:00:59, x:05:59, ...)

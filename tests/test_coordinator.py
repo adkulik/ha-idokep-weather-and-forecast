@@ -298,7 +298,22 @@ class TestCoordinatorUpdates:
 
 
 class TestTick:
-    """The whole-minute timer callback."""
+    """The timer callback (every minute at second 59)."""
+
+    @pytest.mark.asyncio
+    async def test_tick_at_second_59_counts_as_its_minute(
+        self, coordinator: IdokepDataUpdateCoordinator
+    ) -> None:
+        """x:09:59 is before the x:10 schedule, x:10:59 is on it."""
+        listen(coordinator, CURRENT, HOURLY)
+        await update_at(coordinator, local(2026, 10, 29, 12, 7))
+
+        with patch.object(coordinator, "async_refresh", AsyncMock()) as refresh:
+            await coordinator.async_tick(local(2026, 10, 29, 12, 9, 59))
+            refresh.assert_not_awaited()
+
+            await coordinator.async_tick(local(2026, 10, 29, 12, 10, 59, 4000))
+            refresh.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_tick_refreshes_only_when_due(

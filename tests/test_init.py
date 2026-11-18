@@ -115,9 +115,9 @@ class TestIdokepInit:
             mock_hass.config_entries.async_forward_entry_setups.assert_called_once_with(
                 mock_entry, PLATFORMS
             )
-            # Schedules are checked at every whole minute, stopped on unload
+            # Schedules are checked every minute at second 59, stopped on unload
             mock_track_time.assert_called_once_with(
-                mock_hass, mock_coordinator.async_tick, second=0
+                mock_hass, mock_coordinator.async_tick, second=59
             )
             mock_entry.async_on_unload.assert_called_once_with("unsub_timer")
 

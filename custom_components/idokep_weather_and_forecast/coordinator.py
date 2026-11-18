@@ -120,16 +120,18 @@ class IdokepDataUpdateCoordinator(DataUpdateCoordinator):
     Class to manage fetching data from the API.
 
     Each idokep.hu page has its own schedule:
-    - current conditions (/idojaras/): every 10 minutes, retry every minute
+    - current conditions (/idojaras/): every 10 minutes (x:00:59, x:10:59,
+      ...), retry every minute
     - forecast (/elorejelzes/: hourly and daily forecast, alerts, today's
-      max/min): every full hour, retry every 10 minutes
+      max/min): every full hour (x:00:59), retry every 10 minutes
     - humidity map (/para: humidity, dew point): every 10 minutes, retry every
       minute
     - pressure map (/legnyomas: pressure): every 10 minutes, retry every minute
     - UV map (/uv: UV index): every 10 minutes, retry every minute
 
-    There is no update_interval; async_tick is called at every whole minute
-    and refreshes only when a source used by an enabled entity is due. A page
+    There is no update_interval; async_tick is called every minute at second
+    59 (the schedules count in whole minutes, so x:00:59 is x:00) and
+    refreshes only when a source used by an enabled entity is due. A page
     whose entities are all disabled is not fetched and its data is dropped.
     """
 
@@ -278,7 +280,7 @@ class IdokepDataUpdateCoordinator(DataUpdateCoordinator):
         return set(self.schedules) - (disabled - {CURRENT})
 
     async def async_tick(self, now: datetime) -> None:
-        """Refresh if a needed source is due (called at every whole minute)."""
+        """Refresh if a needed source is due (called every minute at second 59)."""
         # Honour the entry's "Enable polling for updates" system option, as
         # Home Assistant's own polling does
         if self.config_entry.pref_disable_polling:

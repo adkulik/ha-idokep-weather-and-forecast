@@ -146,12 +146,12 @@ A bejegyzés nevét a Home Assistant saját **Átnevezés** funkciójával lehet
 
 | Adatforrás | Mit frissít | Ütemezés | Hiba esetén |
 |---|---|---|---|
-| Aktuális időjárás (`/idojaras/`) | hőmérséklet, állapot | 10 percenként (x:00, x:10, x:20, …) | percenként újra |
-| Előrejelzés (`/elorejelzes/`) | óránkénti és napi előrejelzés, mai max/min, szél, riasztások | óránként (x:00) | 10 percenként újra |
+| Aktuális időjárás (`/idojaras/`) | hőmérséklet, állapot | 10 percenként (x:00:59, x:10:59, x:20:59, …) | percenként újra |
+| Előrejelzés (`/elorejelzes/`) | óránkénti és napi előrejelzés, mai max/min, szél, riasztások | óránként (x:00:59) | 10 percenként újra |
 | Időjárás-állomások (`/automata/<kód>`) | állomás szenzorai | 5 percenként (x:00:59, x:05:59, …), minden állomás egyszerre | percenként újra, ha egyik sem érhető el |
-| Páratartalom-térkép (`/para`) | páratartalom, harmatpont | 10 percenként (x:00, x:10, x:20, …) | percenként újra |
-| Légnyomástérkép (`/legnyomas`) | légnyomás | 10 percenként (x:00, x:10, x:20, …) | percenként újra |
-| UV-térkép (`/uv`) | UV-B index | 10 percenként (x:00, x:10, x:20, …) | percenként újra |
+| Páratartalom-térkép (`/para`) | páratartalom, harmatpont | 10 percenként (x:00:59, x:10:59, x:20:59, …) | percenként újra |
+| Légnyomástérkép (`/legnyomas`) | légnyomás | 10 percenként (x:00:59, x:10:59, x:20:59, …) | percenként újra |
+| UV-térkép (`/uv`) | UV-B index | 10 percenként (x:00:59, x:10:59, x:20:59, …) | percenként újra |
 | Radar (`/radar/`) | radarkép | 5 percenként (x:00:59, x:05:59, …) | percenként, amíg új kép nem érkezik |
 
 - Indításkor (újraindítás, újratöltés, új bejegyzés) minden adat azonnal frissül.
