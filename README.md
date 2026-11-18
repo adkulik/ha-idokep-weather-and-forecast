@@ -45,7 +45,7 @@ Minden felvett bejegyzéshez (településhez) az alábbiak jönnek létre. A `<N
 | UV-B index | szenzor | a település állomásainak átlaga az UV-térképről (`/uv`); kevés állomás méri |
 | Riasztás 3 órán belül | szenzor (felsorolás) | a legmagasabb szint az óránkénti kártyák riasztás-ikonjaiból: Nincs riasztás, Sárga, Narancs vagy Piros riasztás; az idokep.hu ezeket az aktuális és a következő két órához teszi ki. Az `alerts` attribútum az érvényes riasztásokat sorolja fel |
 | Figyelmeztetés mára | szenzor (felsorolás) | az oldal tetején lévő sáv(ok) legmagasabb szintje, amely riasztás vagy figyelmeztetés is lehet: Nincs figyelmeztetés, Sárga, Narancs vagy Piros figyelmeztetés. A `warnings` attribútum az érvényes figyelmeztetéseket sorolja fel |
-| Vihar várható egy órán belül | bináris szenzor | bekapcsol, ha az aktuális vagy a következő óra viharos (zivatar, száraz zivatar, villámlás, eső viharos széllel, porvihar); az oldal óránkénti letöltésekor frissül |
+| Vihar várható egy órán belül | bináris szenzor | bekapcsol, ha az aktuális időjárás viharos (10 percenként frissül), vagy az előrejelzésben az aktuális vagy a következő óra viharos (óránként frissül). Viharos: zivatar, száraz zivatar, villámlás, jégeső, eső viharos széllel, porvihar |
 
 Az `alerts` és a `warnings` attribútum csak az érvényben lévő típusokat tartalmazza, típusonként a legmagasabb szinttel. Elöl a legmagasabb szint áll, az azonos szintűek a lenti típussorrendben követik egymást, például:
 

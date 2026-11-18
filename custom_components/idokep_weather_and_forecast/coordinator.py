@@ -50,6 +50,7 @@ SOURCE_ENTITIES = {
         "condition",
         "cloud_coverage",
         "apparent_temperature",
+        "storm_expected_1h",
     ),
     HOURLY: (
         "weather",

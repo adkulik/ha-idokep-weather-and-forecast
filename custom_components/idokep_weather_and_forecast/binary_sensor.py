@@ -10,7 +10,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntityDescription,
 )
 
-from .coordinator import HOURLY
+from .coordinator import CURRENT, HOURLY
 from .entity import IdokepEntity
 
 if TYPE_CHECKING:
@@ -58,8 +58,8 @@ class IdokepBinarySensor(IdokepEntity, BinarySensorEntity):
         entity_description: BinarySensorEntityDescription,
     ) -> None:
         """Initialize the binary_sensor class."""
-        # The storm comes from the hourly forecast page
-        super().__init__(coordinator, frozenset({HOURLY}))
+        # The storm comes from the current weather and the hourly forecast pages
+        super().__init__(coordinator, frozenset({CURRENT, HOURLY}))
         self.entity_description = entity_description
         # Set unique_id for entity persistence after restart
         self._attr_unique_id = (
@@ -68,5 +68,17 @@ class IdokepBinarySensor(IdokepEntity, BinarySensorEntity):
 
     @property
     def is_on(self) -> bool | None:
-        """Return true if the current or next hour was stormy at the last fetch."""
-        return self.coordinator.data.get("storm_expected")
+        """
+        Return true if it's stormy now, or in the current or next hour.
+
+        Now: the current weather (fetched every 10 minutes); the hours: the
+        hourly forecast at its last fetch. None if neither is known.
+        """
+        values = [
+            self.coordinator.data.get(key) for key in ("storm_now", "storm_expected")
+        ]
+        if any(values):
+            return True
+        if all(value is None for value in values):
+            return None
+        return False

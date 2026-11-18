@@ -92,13 +92,18 @@ class TestIdokepBinarySensor:
         [
             ({"storm_expected": True}, True),
             ({"storm_expected": False}, False),
-            ({}, None),  # the forecast page isn't read yet: unknown
+            ({"storm_now": True}, True),
+            ({"storm_now": False}, False),
+            ({"storm_now": True, "storm_expected": False}, True),
+            ({"storm_now": False, "storm_expected": True}, True),
+            ({"storm_now": False, "storm_expected": False}, False),
+            ({}, None),  # neither page is read yet: unknown
         ],
     )
     def test_storm_shows_the_value_of_the_last_fetch(
         self, mock_coordinator: Mock, data: dict, expected: bool | None
     ) -> None:
-        """The state only changes with the data of a fetch, not with the clock."""
+        """On if it's stormy now or in the current or next hour (last fetches)."""
         mock_coordinator.data = data
         sensor = IdokepBinarySensor(mock_coordinator, ENTITY_DESCRIPTIONS[0])
         assert sensor.is_on is expected

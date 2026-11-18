@@ -163,10 +163,18 @@ class WeatherConditionMapper:
         return sorted({*cls._CONDITION_MAPPING.values(), "clear-night"})
 
 
-# Condition texts of a storm: those mapped to a lightning condition, and two
-# with storm in their name that map to other conditions
+# Condition texts of a storm: those mapped to a lightning condition, hail
+# (only falls from thunderclouds), and two with storm in their name that map
+# to other conditions
 STORM_TEXTS = frozenset(
-    {"száraz zivatar", "villámlás", "zivatar", "eső viharos széllel", "porvihar"}
+    {
+        "száraz zivatar",
+        "villámlás",
+        "zivatar",
+        "jégeső",
+        "eső viharos széllel",
+        "porvihar",
+    }
 )
 
 
@@ -355,6 +363,7 @@ class CurrentWeatherParser(WeatherParser):
             condition = cond_div.text.strip()
             result["condition"] = WeatherConditionMapper.map_condition(condition)
             result["cloud_coverage"] = WeatherConditionMapper.cloud_coverage(condition)
+            result["storm_now"] = condition.lower() in STORM_TEXTS
 
         return result
 

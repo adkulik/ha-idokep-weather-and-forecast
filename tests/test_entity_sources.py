@@ -67,9 +67,9 @@ def test_sensor_sources(mock_coordinator: Mock, description: object) -> None:
 
 @pytest.mark.parametrize("description", BINARY_SENSOR_DESCRIPTIONS, ids=lambda d: d.key)
 def test_binary_sensor_sources(mock_coordinator: Mock, description: object) -> None:
-    """Storm and alert sensors all read the hourly forecast page."""
+    """The storm sensor reads the current weather and the hourly forecast pages."""
     binary_sensor = IdokepBinarySensor(mock_coordinator, description)
-    assert binary_sensor.coordinator_context == frozenset({HOURLY})
+    assert binary_sensor.coordinator_context == frozenset({CURRENT, HOURLY})
 
 
 def test_weather_sources(mock_coordinator: Mock) -> None:

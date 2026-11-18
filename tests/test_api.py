@@ -14,6 +14,7 @@ from bs4 import BeautifulSoup, Tag
 from custom_components.idokep_weather_and_forecast.api import (
     _BROWSER_HEADERS,
     AlertParser,
+    CurrentWeatherParser,
     DailyForecastParser,
     HourlyForecastParser,
     HttpClient,
@@ -347,7 +348,7 @@ class TestIdokepApiClientWeatherScraping:
         ):
             result = await api_client.async_get_current_weather("Budapest")
 
-        assert set(result) == {"temperature", "condition", "cloud_coverage"}
+        assert set(result) == {"temperature", "condition", "cloud_coverage", "storm_now"}
         assert result["temperature"] == 22
         assert result["condition"] == "sunny"
         assert result["cloud_coverage"] == 0
@@ -2145,7 +2146,7 @@ def _parse_hourly_at(soup: BeautifulSoup, *when: int) -> dict:
 
 @pytest.mark.parametrize(
     "text",
-    ["Zivatar", "Száraz zivatar", "Villámlás", "Eső viharos széllel", "Porvihar"],
+    ["Zivatar", "Száraz zivatar", "Villámlás", "Jégeső", "Eső viharos széllel", "Porvihar"],
 )
 @pytest.mark.parametrize(
     ("hours", "expected"),
@@ -2324,3 +2325,24 @@ def test_hourly_cloud_coverage(text: str | None, expected: int | None) -> None:
     hour = card.find("div", class_="ik wide-hourly-forecast-hour")
     item = HourlyForecastParser()._parse_hourly_card(card, hour, dt.date(2026, 11, 17))
     assert item["cloud_coverage"] == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Zivatar", True),
+        ("Villámlás", True),
+        ("Jégeső", True),
+        ("Eső viharos széllel", True),
+        ("Eső", False),
+        ("Napos", False),
+    ],
+)
+def test_current_weather_marks_a_storm_now(text: str, expected: bool) -> None:
+    """The current condition's text tells whether it's stormy now."""
+    soup = BeautifulSoup(
+        f'<div class="current-temperature">12 °C</div>'
+        f'<div class="current-weather">{text}</div>',
+        "html.parser",
+    )
+    assert CurrentWeatherParser().parse(soup)["storm_now"] is expected
