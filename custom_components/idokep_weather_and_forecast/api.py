@@ -592,6 +592,10 @@ class HourlyForecastParser(WeatherParser):
                 # If hour decreased, we moved to next day
                 if last_hour is not None and hour_int < last_hour:
                     current_date += dt.timedelta(days=1)
+                # The list starts with the next hour, so after 23:00 its
+                # first card (0:00) is already tomorrow's
+                if last_hour is None and self._is_tomorrow(hour_int, now):
+                    current_date += dt.timedelta(days=1)
 
                 last_hour = hour_int
 
@@ -621,6 +625,17 @@ class HourlyForecastParser(WeatherParser):
                     result[key] = current[item_key]
 
         return result
+
+    @staticmethod
+    def _is_tomorrow(first_hour: int, now: dt.datetime) -> bool:
+        """
+        Return True if the list's first hour is tomorrow's.
+
+        The first card is the next hour (or, from a page cached a little
+        earlier, the current one), so it is at most a few hours ahead of now;
+        an hour more than 12 hours before now must be tomorrow's.
+        """
+        return now.hour - first_hour > 12
 
     def restore_hourly_forecast(self, items: list[dict[str, Any]]) -> None:
         """Seed the hourly items restored from disk (to keep the current hour)."""
@@ -832,17 +847,19 @@ class HourlyForecastParser(WeatherParser):
         Return the hour's precipitation in mm; 0 when the card shows none.
 
         The amount is in an HTML comment inside the rain bar (e.g.
-        <div class="ik hourly-rainlevel"><!--2 mm--></div>), not shown on
-        the page. The bar's height follows it but stops at 16 px
-        (7 px: 1 mm, 12 px: 2 mm, 16 px: 3 mm or more), so it is only used
-        if the comment is missing.
+        <div class="ik hourly-rainlevel"><!--16 mm--></div>), not shown on
+        the page. Despite its "mm" it is in tenths of a millimetre: a day's
+        hourly amounts add up to ten times the day's own amount on the same
+        page (e.g. 161 against 16 mm), so 16 is 1.6 mm. The bar's height
+        follows it but stops at 16 px (7 px: 0.1 mm, 12 px: 0.2 mm, 16 px:
+        0.3 mm or more), so it is only used if the comment is missing.
         """
         level = card.find("div", class_="hourly-rainlevel")
         if isinstance(level, Tag):
             for comment in level.find_all(string=lambda text: isinstance(text, Comment)):
                 match = re.search(r"(\d+(?:[.,]\d+)?)", comment)
                 if match:
-                    return float(match.group(1).replace(",", "."))
+                    return round(float(match.group(1).replace(",", ".")) / 10, 2)
         meter = card.find("div", class_="hourly-rainlevel-meter")
         style = meter.get("style", "") if isinstance(meter, Tag) else ""
         match = re.search(r"height:\s*(\d+)px", style if isinstance(style, str) else "")
@@ -852,8 +869,8 @@ class HourlyForecastParser(WeatherParser):
         if height <= 0:
             return 0
         if height <= 9:  # 7 px bar
-            return 1
-        return 2 if height <= 14 else 3  # 12 px / 16 px bars
+            return 0.1
+        return 0.2 if height <= 14 else 0.3  # 12 px / 16 px bars
 
 
 class DailyForecastParser(WeatherParser):

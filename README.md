@@ -36,7 +36,7 @@ Minden felvett bejegyzéshez (településhez) az alábbiak jönnek létre. A `<N
 | Szélerősség | szenzor (felsorolás) | Beaufort-skála 0–12 (Szélcsend … Orkán) |
 | Szélsebesség | szenzor (km/h) | **becslés**: a szélerősség Beaufort-fokozatának alsó határa (az idokep.hu nem ad számot) |
 | Széllökés | szenzor (km/h) | **becslés**: a szélerősség Beaufort-fokozatának felső határa |
-| Csapadék | szenzor (mm) | az aktuális óra csapadéka az előrejelzésből (egész mm) |
+| Csapadék | szenzor (mm) | az aktuális óra csapadéka az előrejelzésből (0,1 mm pontossággal) |
 | Csapadék valószínűsége | szenzor (%) | az aktuális óra előrejelzéséből; 0, ha az oldal nem mutat értéket |
 | Páratartalom | szenzor (%) | a település állomásainak átlaga a páratartalom-térképről (`/para`) |
 | Harmatpont | szenzor (°C) | a település állomásainak átlaga a harmatpont-térképről (`/para`) |

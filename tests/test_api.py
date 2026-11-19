@@ -1128,8 +1128,8 @@ class TestHourlyParserBranches:
 
         assert result["precipitation_probability"] == 18
         # The current hour's hidden amount (the Precipitation sensor)
-        assert result["precipitation"] == 2.0
-        assert [i["precipitation"] for i in result["hourly_forecast"]] == [2.0, 0]
+        assert result["precipitation"] == 0.2
+        assert [i["precipitation"] for i in result["hourly_forecast"]] == [0.2, 0]
         probabilities = [
             item["precipitation_probability"] for item in result["hourly_forecast"]
         ]
@@ -1877,18 +1877,20 @@ def _rain_card(level: str = "", meter: int | None = None) -> Tag:
 @pytest.mark.parametrize(
     ("level", "meter", "expected"),
     [
-        ("<!--2 mm-->", 12, 2.0),  # the hidden value, as on the page
-        ("<!-- 7 mm -->", 16, 7.0),  # above 3 mm the bar stays at 16 px
-        ("<!--0,5 mm-->", 7, 0.5),
-        ("", 7, 1),  # no comment: from the bar
-        ("", 12, 2),
-        ("", 16, 3),
+        # The hidden value is in tenths of a mm, as on the page
+        ("<!--2 mm-->", 12, 0.2),
+        ("<!-- 7 mm -->", 16, 0.7),  # from 0.3 mm the bar stays at 16 px
+        ("<!--16 mm-->", 16, 1.6),  # the page on 2026-11-19 at 0:00
+        ("<!--0,5 mm-->", 7, 0.05),
+        ("", 7, 0.1),  # no comment: from the bar
+        ("", 12, 0.2),
+        ("", 16, 0.3),
         ("", None, 0),  # no bar, no rain
         ("<!--nincs-->", None, 0),
     ],
 )
 def test_extract_precipitation_amount(level: str, meter: int | None, expected: float) -> None:
-    """The hour's mm comes from the hidden comment, else from the bar."""
+    """The hour's mm comes from the hidden comment (tenths), else from the bar."""
     card = _rain_card(level, meter)
     assert HourlyForecastParser().extract_precipitation_amount(card) == expected
 
@@ -2378,3 +2380,30 @@ def test_current_weather_marks_a_storm_now(text: str, expected: bool) -> None:
 def test_daily_datetime_is_local_midnight(day: dt.date, expected: str) -> None:
     """A daily item's datetime is the day's local midnight with its offset."""
     assert TimeUtils.day_start(day) == expected
+
+
+@pytest.mark.parametrize(
+    ("now", "hours", "first"),
+    [
+        # After 23:00 the list starts with tomorrow's 0:00 (the page on
+        # 2026-11-19 at 23:58)
+        ((2026, 11, 19, 23, 58), ("0:00", "1:00"), "2026-11-20T00:00:00+01:00"),
+        ((2026, 11, 19, 23, 1), ("0:00", "1:00"), "2026-11-20T00:00:00+01:00"),
+        # A page cached a little earlier still starting with the current hour
+        ((2026, 11, 19, 23, 58), ("23:00", "0:00"), "2026-11-19T23:00:00+01:00"),
+        # Just after midnight and in the day: the first hour is today's
+        ((2026, 11, 20, 0, 5), ("1:00", "2:00"), "2026-11-20T01:00:00+01:00"),
+        ((2026, 11, 19, 12, 30), ("13:00", "14:00"), "2026-11-19T13:00:00+01:00"),
+    ],
+)
+def test_hourly_list_starts_on_the_right_day(
+    now: tuple[int, ...], hours: tuple[str, ...], first: str
+) -> None:
+    """The first card's date follows the clock, also across midnight."""
+    page = _hourly_page(dict.fromkeys(hours, "Eső"))
+    forecast = _parse_hourly_at(page, *now)["hourly_forecast"]
+    starts = [item["datetime"] for item in forecast]
+    assert first in starts
+    assert starts[starts.index(first) + 1] == (
+        dt.datetime.fromisoformat(first) + dt.timedelta(hours=1)
+    ).isoformat()
