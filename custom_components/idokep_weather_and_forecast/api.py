@@ -430,15 +430,16 @@ class AlertParser(WeatherParser):
         """
         Return the banners at the top of the page.
 
-        A banner holds only the level and the type, e.g. "Sárga figyelmeztetés
-        zivatarra" or "Sárga riasztás viharos szélre" (<div class="...
+        A banner holds only the level and the types, e.g. "Sárga
+        figyelmeztetés zivatarra", "Sárga riasztás viharos szélre" or "Sárga
+        figyelmeztetés zivatarra, viharos szélre" (<div class="...
         inlineWeatherAlert">).
         """
         return [
             item
             for box in soup.find_all("div", class_="inlineWeatherAlert")
             if isinstance(box, Tag)
-            and (item := self._alert_from_text(box.get_text(" ", strip=True)))
+            for item in self._alerts_from_text(box.get_text(" ", strip=True))
         ]
 
     def _parse_hourly_alerts(self, soup: BeautifulSoup) -> list[dict[str, str]]:
@@ -453,19 +454,30 @@ class AlertParser(WeatherParser):
             if not isinstance(link, Tag):
                 continue
             description = link.get("data-bs-content")
-            if isinstance(description, str) and (
-                item := self._alert_from_text(description)
-            ):
-                alerts.append(item)
+            if isinstance(description, str):
+                alerts.extend(self._alerts_from_text(description))
         return alerts
 
     @classmethod
-    def _alert_from_text(cls, text: str) -> dict[str, str] | None:
-        """Return {"type", "level"} of an alert text (None without a level)."""
-        level = cls._level_from_text(text)
-        if level is None:
-            return None
-        return {"type": cls._type_from_text(text), "level": level}
+    def _alerts_from_text(cls, text: str) -> list[dict[str, str]]:
+        """
+        Return a {"type", "level"} for each type named in an alert text.
+
+        The parts are separated by commas or "és", e.g. "Sárga figyelmeztetés
+        zivatarra, viharos szélre"; a part without a level of its own has the
+        level before it. Without any level the list is empty; with a level but
+        no known type it is a single "other".
+        """
+        items = []
+        level = None
+        for part in re.split(r",|\bés\b", text):
+            level = cls._level_from_text(part) or level
+            alert_type = cls._known_type(part)
+            if level is not None and alert_type is not None:
+                items.append({"type": alert_type, "level": level})
+        if not items and level is not None:
+            items.append({"type": "other", "level": level})
+        return items
 
     @staticmethod
     def _level_from_text(text: str) -> str | None:
@@ -480,13 +492,13 @@ class AlertParser(WeatherParser):
         return None
 
     @classmethod
-    def _type_from_text(cls, text: str) -> str:
-        """Return the alert type named in an alert text ("other" if none)."""
+    def _known_type(cls, text: str) -> str | None:
+        """Return the first alert type named in a text (None if none)."""
         lowered = text.lower()
         for words, alert_type in cls._TYPE_WORDS:
             if any(word in lowered for word in words):
                 return alert_type
-        return "other"
+        return None
 
     @staticmethod
     def _merge(items: list[dict[str, str]]) -> list[dict[str, str]]:

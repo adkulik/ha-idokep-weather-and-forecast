@@ -675,6 +675,14 @@ class TestAlertParserWarning:
             ("Sárga riasztás viharos szélre", [{"type": "wind", "level": "yellow"}]),
             ("Sárga figyelmeztetés zivatarra", [{"type": "thunderstorm", "level": "yellow"}]),
             ("Piros figyelmeztetés hó miatt", [{"type": "snow", "level": "red"}]),
+            (
+                # The page on 2026-11-19: one banner, two types
+                "Sárga figyelmeztetés zivatarra, viharos szélre",
+                [
+                    {"type": "thunderstorm", "level": "yellow"},
+                    {"type": "wind", "level": "yellow"},
+                ],
+            ),
             ("Figyelmeztetés", []),
         ],
     )
@@ -824,7 +832,7 @@ class TestAlertParserHourly:
 
 
 class TestAlertParserHelpers:
-    """Tests for _type_from_text and _merge."""
+    """Tests for _known_type, _alerts_from_text and _merge."""
 
     @pytest.mark.parametrize(
         ("description", "expected_type"),
@@ -848,13 +856,50 @@ class TestAlertParserHelpers:
             ("Sárga figyelmeztetés melegre", "heat"),
         ],
     )
-    def test_type_from_text(self, description: str, expected_type: str) -> None:
+    def test_known_type(self, description: str, expected_type: str) -> None:
         """The text's hazard word gives idokep.hu's own type name."""
-        assert AlertParser._type_from_text(description) == expected_type
+        assert AlertParser._known_type(description) == expected_type
 
     def test_unknown_type_is_other(self) -> None:
-        """A text without a known hazard word is "other"."""
-        assert AlertParser._type_from_text("Sárga riasztás") == "other"
+        """A text with a level but no known hazard word is "other"."""
+        assert AlertParser._known_type("Sárga riasztás") is None
+        assert AlertParser._alerts_from_text("Sárga riasztás") == [
+            {"type": "other", "level": "yellow"}
+        ]
+
+    def test_no_level_no_alert(self) -> None:
+        """A text without a level gives nothing."""
+        assert AlertParser._alerts_from_text("zivatar várható") == []
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            (
+                "Sárga figyelmeztetés zivatarra, viharos szélre",
+                [
+                    {"type": "thunderstorm", "level": "yellow"},
+                    {"type": "wind", "level": "yellow"},
+                ],
+            ),
+            (
+                "Sárga riasztás zivatarra és viharos szélre",
+                [
+                    {"type": "thunderstorm", "level": "yellow"},
+                    {"type": "wind", "level": "yellow"},
+                ],
+            ),
+            (
+                "Sárga figyelmeztetés zivatarra, narancs riasztás viharos szélre",
+                [
+                    {"type": "thunderstorm", "level": "yellow"},
+                    {"type": "wind", "level": "orange"},
+                ],
+            ),
+        ],
+    )
+    def test_several_types_in_one_text(self, text: str, expected: list) -> None:
+        """Each named type is an item; a part without a level has the one before."""
+        assert AlertParser._alerts_from_text(text) == expected
 
     def test_merge_keeps_each_types_highest_level_highest_first(self) -> None:
         """One item per type at its highest level; highest first, then type order."""
