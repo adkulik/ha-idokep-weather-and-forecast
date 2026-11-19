@@ -18,7 +18,7 @@ from typing import Any
 
 from homeassistant.util import dt as dt_util
 
-from .api import ALERT_LEVELS, ALERT_TYPES, WindStrengthMapper
+from .api import ALERT_LEVELS, ALERT_TYPES, TimeUtils, WindStrengthMapper
 from .const import (
     CURRENT,
     DOMAIN,
@@ -167,19 +167,19 @@ def _days_from(items: list[dict], today: date) -> list[dict]:
     """
     Return the daily items dated today or later.
 
-    Without the precipitation probability that earlier versions saved (the
-    page shows none per day).
+    Earlier versions saved a date-only datetime and a precipitation
+    probability (the page shows none per day): the date becomes local
+    midnight, the probability goes.
     """
     result = []
     for item in items:
         try:
-            day = date.fromisoformat(item["datetime"])
+            day = date.fromisoformat(str(item["datetime"])[:10])
         except (KeyError, TypeError, ValueError):
             continue
         if day >= today:
-            result.append(
-                {k: v for k, v in item.items() if k != "precipitation_probability"}
-            )
+            kept = {k: v for k, v in item.items() if k != "precipitation_probability"}
+            result.append({**kept, "datetime": TimeUtils.day_start(day)})
     return result
 
 

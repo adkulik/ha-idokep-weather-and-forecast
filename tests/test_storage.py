@@ -46,9 +46,9 @@ FORECAST_DATA = {
     "warnings": [{"type": "thunderstorm", "level": "orange"}],
     "warning_level": "orange",
     "daily_forecast": [
-        {"datetime": "2026-10-28", "temperature": 15},
-        {"datetime": "2026-10-29", "temperature": 16},
-        {"datetime": "2026-10-30", "temperature": 14},
+        {"datetime": "2026-10-28T00:00:00+01:00", "temperature": 15},
+        {"datetime": "2026-10-29T00:00:00+01:00", "temperature": 16},
+        {"datetime": "2026-10-30T00:00:00+01:00", "temperature": 14},
     ],
     "temperature_max_today": 16,
     "temperature_min_today": 6,
@@ -129,8 +129,8 @@ class TestRestoreForecast:
             "21:00",
         ]
         assert [d["datetime"] for d in result["daily_forecast"]] == [
-            "2026-10-29",
-            "2026-10-30",
+            "2026-10-29T00:00:00+01:00",
+            "2026-10-30T00:00:00+01:00",
         ]
         assert result["wind_bearing"] == 12
         assert result["wind_strength"] == "moderate_breeze"
@@ -169,20 +169,25 @@ class TestRestoreForecast:
 
     def test_invalid_daily_dates_dropped(self) -> None:
         """Daily entries without a real date are not restored."""
-        data = {"daily_forecast": [{"datetime": "y"}, {"datetime": "2026-10-30"}]}
+        data = {"daily_forecast": [{"datetime": "y"}, {"datetime": "2026-10-30T00:00:00+01:00"}]}
         assert restore(HOURLY, saved(data, NOW - timedelta(hours=3)), NOW) == {
-            "daily_forecast": [{"datetime": "2026-10-30"}]
+            "daily_forecast": [{"datetime": "2026-10-30T00:00:00+01:00"}]
         }
 
-    def test_old_daily_probability_dropped(self) -> None:
-        """The daily precipitation probability saved by earlier versions goes."""
+    def test_old_daily_items_updated(self) -> None:
+        """
+        A daily item saved by an earlier version is brought up to date.
+
+        Its date-only datetime becomes local midnight, its precipitation
+        probability goes.
+        """
         data = {
             "daily_forecast": [
                 {"datetime": "2026-10-30", "precipitation": 3, "precipitation_probability": 70}
             ]
         }
         assert restore(HOURLY, saved(data, NOW - timedelta(hours=3)), NOW) == {
-            "daily_forecast": [{"datetime": "2026-10-30", "precipitation": 3}]
+            "daily_forecast": [{"datetime": "2026-10-30T00:00:00+01:00", "precipitation": 3}]
         }
 
 

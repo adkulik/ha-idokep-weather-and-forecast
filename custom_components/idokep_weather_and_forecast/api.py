@@ -294,6 +294,17 @@ class TimeUtils:
             else dt.timezone(dt.timedelta(hours=2))
         )
 
+    @staticmethod
+    def day_start(day: dt.date) -> str:
+        """
+        Return a day's local midnight as ISO text (a daily item's datetime).
+
+        e.g. "2026-11-19T00:00:00+01:00"; the offset follows summer time.
+        """
+        return dt.datetime.combine(
+            day, dt.time(0), tzinfo=TimeUtils.get_local_timezone()
+        ).isoformat()
+
 
 # HTTP client wrapper
 # Headers that mimic a real browser to avoid bot-detection 403s
@@ -974,7 +985,8 @@ class DailyForecastParser(WeatherParser):
         """Return the remembered entry if it is for today (else forget it)."""
         if self._today_item is None:
             return None
-        if self._today_item.get("datetime") != today.isoformat():
+        # The date part, so a date-only entry saved by an earlier version counts
+        if str(self._today_item.get("datetime", ""))[:10] != today.isoformat():
             self._today_item = None
             return None
         return self._today_item
@@ -987,7 +999,7 @@ class DailyForecastParser(WeatherParser):
         precipitation = self.extract_precipitation(col)
 
         return {
-            "datetime": str(forecast_date),
+            "datetime": TimeUtils.day_start(forecast_date),
             "temperature": max_temp,
             "templow": min_temp,
             "condition": condition,

@@ -12,7 +12,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .api import IdokepApiClientCommunicationError
+from .api import IdokepApiClientCommunicationError, TimeUtils
 from .calculations import apparent_temperature
 from .const import (
     CURRENT,
@@ -212,12 +212,12 @@ class IdokepDataUpdateCoordinator(DataUpdateCoordinator):
         """Return today's daily entry from the restored forecast page data."""
         forecast = self._source_data[HOURLY]
         for item in forecast.get("daily_forecast", []):
-            if item.get("datetime") == today.isoformat():
+            if str(item.get("datetime", ""))[:10] == today.isoformat():
                 return item
         # Data saved by an earlier version only has today's max/min
         if "temperature_max_today" in forecast or "temperature_min_today" in forecast:
             return {
-                "datetime": today.isoformat(),
+                "datetime": TimeUtils.day_start(today),
                 "temperature": forecast.get("temperature_max_today"),
                 "templow": forecast.get("temperature_min_today"),
                 "condition": None,

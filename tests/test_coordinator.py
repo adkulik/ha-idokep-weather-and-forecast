@@ -501,7 +501,7 @@ class TestSavedData:
                 {"datetime": local(2026, 10, 29, 13, 0).isoformat(), "temperature": 15},
             ],
             "alerts": [],
-            "daily_forecast": [{"datetime": "2026-10-29", "temperature": 16}],
+            "daily_forecast": [{"datetime": "2026-10-29T00:00:00+01:00", "temperature": 16}],
         }
         client.async_get_hourly_forecast.return_value = hourly
         coordinator.config_entry.entry_id = "entry1"
@@ -559,7 +559,7 @@ class TestSavedData:
         # Saved by an earlier version: only max/min, so a minimal entry
         client.restore_today_forecast.assert_called_once_with(
             {
-                "datetime": "2026-10-29",
+                "datetime": "2026-10-29T00:00:00+01:00",
                 "temperature": 16,
                 "templow": 6,
                 "condition": None,
@@ -575,8 +575,8 @@ class TestSavedData:
         fake_store: type[FakeStore],
     ) -> None:
         """Today's full daily entry survives an evening restart."""
-        today = {"datetime": "2026-10-29", "temperature": 16, "templow": 6}
-        tomorrow = {"datetime": "2026-10-30", "temperature": 14, "templow": 7}
+        today = {"datetime": "2026-10-29T00:00:00+01:00", "temperature": 16, "templow": 6}
+        tomorrow = {"datetime": "2026-10-30T00:00:00+01:00", "temperature": 14, "templow": 7}
         coordinator.config_entry.entry_id = "entry1"
         fake_store.files["idokep_weather_and_forecast.entry1"] = {
             "sources": {

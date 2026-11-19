@@ -1321,7 +1321,7 @@ class TestDailyParserBranches:
             FrozenDateTime,
         ):
             result = parser.parse(BeautifulSoup(html, "html.parser"))
-        assert result["daily_forecast"][0]["datetime"] == "2025-06-02"
+        assert result["daily_forecast"][0]["datetime"] == "2025-06-02T00:00:00+02:00"
 
     # ---- extract_temperature -----------------------------------------------
 
@@ -1609,15 +1609,15 @@ class TestTodayMinMax:
         assert result["temperature_max_today"] == 16
         assert result["temperature_min_today"] == 6
         assert [d["datetime"] for d in result["daily_forecast"]] == [
-            "2026-10-29",
-            "2026-10-30",
+            "2026-10-29T00:00:00+01:00",
+            "2026-10-30T00:00:00+01:00",
         ]
 
     def test_restored_values_kept_until_midnight(self) -> None:
         """Values restored after a restart fill in once today's column is gone."""
         parser = DailyForecastParser()
         parser.restore_today_forecast(
-            {"datetime": "2026-10-29", "temperature": 16, "templow": 6}
+            {"datetime": "2026-10-29T00:00:00+01:00", "temperature": 16, "templow": 6}
         )
         assert self.parse_at(parser, FRI, 2026, 10, 29, 21, 0) == {
             "temperature_max_today": 16,
@@ -1645,16 +1645,16 @@ class TestDailyForecastDates:
     def test_daytime_starts_today(self) -> None:
         """During the day the strip starts with today."""
         assert self.parse_at(THU + FRI, 2026, 10, 29, 10, 0) == [
-            "2026-10-29",
-            "2026-10-30",
+            "2026-10-29T00:00:00+01:00",
+            "2026-10-30T00:00:00+01:00",
         ]
 
     def test_evening_strip_starting_tomorrow(self) -> None:
         """In the evening the first column is tomorrow and is labelled so."""
         sat = daily_col("Szombat<br>2026. október 31.", 12, 7)
         assert self.parse_at(FRI + sat, 2026, 10, 29, 20, 51) == [
-            "2026-10-30",
-            "2026-10-31",
+            "2026-10-30T00:00:00+01:00",
+            "2026-10-31T00:00:00+01:00",
         ]
 
     def test_values_stay_with_their_date(self) -> None:
@@ -1665,27 +1665,27 @@ class TestDailyForecastDates:
             frozen_now(2026, 10, 29, 20, 51),
         ):
             item = DailyForecastParser().parse(soup)["daily_forecast"][0]
-        assert item["datetime"] == "2026-10-30"
+        assert item["datetime"] == "2026-10-30T00:00:00+01:00"
         assert (item["temperature"], item["templow"]) == (14, 7)
 
     def test_past_columns_dropped(self) -> None:
         """A page cached before midnight does not report yesterday."""
-        assert self.parse_at(THU + FRI, 2026, 10, 30, 0, 2) == ["2026-10-30"]
+        assert self.parse_at(THU + FRI, 2026, 10, 30, 0, 2) == ["2026-10-30T00:00:00+01:00"]
 
     def test_unreadable_date_follows_previous_column(self) -> None:
         """A column without a date is taken as the day after the previous one."""
         undated = daily_col("", 10, 3)
         assert self.parse_at(FRI + undated, 2026, 10, 29, 20, 51) == [
-            "2026-10-30",
-            "2026-10-31",
+            "2026-10-30T00:00:00+01:00",
+            "2026-10-31T00:00:00+01:00",
         ]
 
     def test_no_dates_at_all_counts_from_today(self) -> None:
         """Without any readable date the old behaviour remains: today onwards."""
         html = daily_col("", 10, 3) + daily_col("", 11, 4)
         assert self.parse_at(html, 2026, 10, 29, 20, 51) == [
-            "2026-10-29",
-            "2026-10-30",
+            "2026-10-29T00:00:00+01:00",
+            "2026-10-30T00:00:00+01:00",
         ]
 
     def test_today_kept_until_midnight(self) -> None:
@@ -1701,15 +1701,15 @@ class TestDailyForecastDates:
                 result = parser.parse(BeautifulSoup(html, "html.parser"))
             return [item["datetime"] for item in result["daily_forecast"]]
 
-        assert dates_at(THU + FRI, 2026, 10, 29, 10, 0) == ["2026-10-29", "2026-10-30"]
+        assert dates_at(THU + FRI, 2026, 10, 29, 10, 0) == ["2026-10-29T00:00:00+01:00", "2026-10-30T00:00:00+01:00"]
         # Evening: the page starts with Friday, today's entry is put back
         assert dates_at(FRI + sat, 2026, 10, 29, 21, 0) == [
-            "2026-10-29",
-            "2026-10-30",
-            "2026-10-31",
+            "2026-10-29T00:00:00+01:00",
+            "2026-10-30T00:00:00+01:00",
+            "2026-10-31T00:00:00+01:00",
         ]
         # After midnight Thursday is gone for good
-        assert dates_at(FRI + sat, 2026, 10, 30, 0, 0) == ["2026-10-30", "2026-10-31"]
+        assert dates_at(FRI + sat, 2026, 10, 30, 0, 0) == ["2026-10-30T00:00:00+01:00", "2026-10-31T00:00:00+01:00"]
 
     def test_kept_today_entry_is_the_full_forecast(self) -> None:
         """The kept entry has today's temperatures, condition etc."""
@@ -1729,20 +1729,20 @@ class TestDailyForecastDates:
 
     def test_fresh_start_in_the_evening_starts_tomorrow(self) -> None:
         """Without having seen today's column there is nothing to put back."""
-        assert self.parse_at(FRI, 2026, 10, 29, 21, 0) == ["2026-10-30"]
+        assert self.parse_at(FRI, 2026, 10, 29, 21, 0) == ["2026-10-30T00:00:00+01:00"]
 
     def test_restored_today_entry_is_put_back(self) -> None:
         """Today's entry restored after a restart is shown until midnight."""
         parser = DailyForecastParser()
-        parser.restore_today_forecast({"datetime": "2026-10-29", "temperature": 16})
+        parser.restore_today_forecast({"datetime": "2026-10-29T00:00:00+01:00", "temperature": 16})
         with patch(
             "custom_components.idokep_weather_and_forecast.api.dt.datetime",
             frozen_now(2026, 10, 29, 21, 0),
         ):
             result = parser.parse(BeautifulSoup(FRI, "html.parser"))
         assert [d["datetime"] for d in result["daily_forecast"]] == [
-            "2026-10-29",
-            "2026-10-30",
+            "2026-10-29T00:00:00+01:00",
+            "2026-10-30T00:00:00+01:00",
         ]
 
     def test_year_change(self) -> None:
@@ -1750,8 +1750,8 @@ class TestDailyForecastDates:
         dec = daily_col("Csütörtök<br>2026. december 31.", 2, -3)
         jan = daily_col("Péntek<br>2027. január 1.", 1, -4)
         assert self.parse_at(dec + jan, 2026, 12, 31, 12, 0) == [
-            "2026-12-31",
-            "2027-01-01",
+            "2026-12-31T00:00:00+01:00",
+            "2027-01-01T00:00:00+01:00",
         ]
 
 
@@ -1953,7 +1953,7 @@ def test_empty_rain_bar_is_no_precipitation() -> None:
 def test_client_passes_restored_data_to_the_parsers() -> None:
     """Restored today and hourly items reach the daily and hourly parsers."""
     client = IdokepApiClient(Mock())
-    today = {"datetime": "2026-11-03", "temperature": 10}
+    today = {"datetime": "2026-11-03T00:00:00+01:00", "temperature": 10}
     hours = [{"datetime": "2026-11-03T08:00:00+01:00"}]
     with (
         patch.object(client._daily_parser, "restore_today_forecast") as daily,
@@ -2365,3 +2365,16 @@ def test_current_weather_marks_a_storm_now(text: str, expected: bool) -> None:
         "html.parser",
     )
     assert CurrentWeatherParser().parse(soup)["storm_now"] is expected
+
+
+@pytest.mark.parametrize(
+    ("day", "expected"),
+    [
+        (dt.date(2026, 11, 19), "2026-11-19T00:00:00+01:00"),  # winter time
+        (dt.date(2026, 7, 1), "2026-07-01T00:00:00+02:00"),  # summer time
+        (dt.date(2026, 3, 29), "2026-03-29T00:00:00+01:00"),  # switches at 2:00
+    ],
+)
+def test_daily_datetime_is_local_midnight(day: dt.date, expected: str) -> None:
+    """A daily item's datetime is the day's local midnight with its offset."""
+    assert TimeUtils.day_start(day) == expected
