@@ -222,7 +222,6 @@ class IdokepDataUpdateCoordinator(DataUpdateCoordinator):
                 "templow": forecast.get("temperature_min_today"),
                 "condition": None,
                 "precipitation": 0,
-                "precipitation_probability": 0,
             }
         return None
 

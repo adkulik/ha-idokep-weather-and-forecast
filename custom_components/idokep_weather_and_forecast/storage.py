@@ -164,7 +164,12 @@ def _hours_not_over(items: list[dict], now: datetime) -> list[dict]:
 
 
 def _days_from(items: list[dict], today: date) -> list[dict]:
-    """Return the daily items dated today or later."""
+    """
+    Return the daily items dated today or later.
+
+    Without the precipitation probability that earlier versions saved (the
+    page shows none per day).
+    """
     result = []
     for item in items:
         try:
@@ -172,7 +177,9 @@ def _days_from(items: list[dict], today: date) -> list[dict]:
         except (KeyError, TypeError, ValueError):
             continue
         if day >= today:
-            result.append(item)
+            result.append(
+                {k: v for k, v in item.items() if k != "precipitation_probability"}
+            )
     return result
 
 

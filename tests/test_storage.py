@@ -174,6 +174,17 @@ class TestRestoreForecast:
             "daily_forecast": [{"datetime": "2026-10-30"}]
         }
 
+    def test_old_daily_probability_dropped(self) -> None:
+        """The daily precipitation probability saved by earlier versions goes."""
+        data = {
+            "daily_forecast": [
+                {"datetime": "2026-10-30", "precipitation": 3, "precipitation_probability": 70}
+            ]
+        }
+        assert restore(HOURLY, saved(data, NOW - timedelta(hours=3)), NOW) == {
+            "daily_forecast": [{"datetime": "2026-10-30", "precipitation": 3}]
+        }
+
 
 @pytest.mark.parametrize(
     "item",

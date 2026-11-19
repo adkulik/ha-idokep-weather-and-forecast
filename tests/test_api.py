@@ -24,7 +24,6 @@ from custom_components.idokep_weather_and_forecast.api import (
     TimeUtils,
     WeatherConditionMapper,
     WindStrengthMapper,
-    set_daily_probabilities,
     station_map_average,
 )
 
@@ -1858,31 +1857,6 @@ def test_daily_precipitation(text: str, bar: int | None, expected: float) -> Non
         "html.parser",
     ).find("div")
     assert DailyForecastParser().extract_precipitation(col) == expected
-
-
-def _hour(stamp: str, probability: int) -> dict:
-    return {"datetime": stamp, "precipitation": 0, "precipitation_probability": probability}
-
-
-
-def test_daily_probability_is_the_highest_shown_hour() -> None:
-    """A day's probability is the highest of its current and coming hours."""
-    daily = [
-        {"datetime": "2026-11-01", "precipitation_probability": None},
-        {"datetime": "2026-11-02", "precipitation_probability": None},
-        {"datetime": "2026-11-05", "precipitation_probability": None},
-    ]
-    hourly = [
-        _hour("2026-11-01T15:00:00+01:00", 50),
-        _hour("2026-11-01T16:00:00+01:00", 71),
-        _hour("2026-11-01T17:00:00+01:00", 0),
-        _hour("2026-11-02T03:00:00+01:00", 44),
-    ]
-
-    set_daily_probabilities(hourly, daily)
-
-    # No hours shown for 5 Nov yet: unknown
-    assert [d["precipitation_probability"] for d in daily] == [71, 44, None]
 
 
 def _rain_card(level: str = "", meter: int | None = None) -> Tag:

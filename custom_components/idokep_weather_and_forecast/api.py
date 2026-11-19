@@ -993,9 +993,6 @@ class DailyForecastParser(WeatherParser):
             "condition": condition,
             "cloud_coverage": WeatherConditionMapper.cloud_coverage(text),
             "precipitation": precipitation,
-            # The page shows none per day; set from the day's hours
-            # (set_daily_probabilities), None while no hour of the day is shown
-            "precipitation_probability": None,
         }
 
     def extract_temperatures(self, col: Tag) -> tuple[int | None, int | None]:
@@ -1095,25 +1092,6 @@ class DailyForecastParser(WeatherParser):
             if match and int(match.group(1)) > 1:
                 return round((int(match.group(1)) - 1) / 2, 2)
         return 0
-
-
-def set_daily_probabilities(
-    hourly: list[dict[str, Any]], daily: list[dict[str, Any]]
-) -> None:
-    """
-    Set each day's precipitation probability: the highest of its hours.
-
-    Only the hours in the forecast count (the current one and those to come);
-    a day without such hours gets None (unknown).
-    """
-    highest: dict[str, int] = {}
-    for item in hourly:
-        probability = item.get("precipitation_probability")
-        if probability is not None:
-            day = item["datetime"][:10]
-            highest[day] = max(highest.get(day, 0), probability)
-    for item in daily:
-        item["precipitation_probability"] = highest.get(item["datetime"])
 
 
 # One station on a map: the link holds its code ("#" if it has no page), the
@@ -1239,9 +1217,6 @@ class IdokepApiClient:
             **self._daily_parser.parse(soup),
             **self._daily_parser.parse_today_min_max(soup),
         }
-        set_daily_probabilities(
-            result.get("hourly_forecast", []), result.get("daily_forecast", [])
-        )
         return result
 
     def restore_today_forecast(self, item: dict[str, Any]) -> None:

@@ -564,7 +564,6 @@ class TestSavedData:
                 "templow": 6,
                 "condition": None,
                 "precipitation": 0,
-                "precipitation_probability": 0,
             }
         )
 
