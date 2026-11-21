@@ -1,5 +1,5 @@
 # Development and CI: run the tests and pylint
-homeassistant==2025.12.5
+homeassistant
 beautifulsoup4
 pylint
 pytest

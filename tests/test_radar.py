@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from homeassistant import config_entries
+from homeassistant.components.image import ImageEntity
 from homeassistant.const import Platform
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from homeassistant.util import dt as dt_util
@@ -50,6 +51,10 @@ from custom_components.idokep_weather_and_forecast.radar import (
     build_gif,
     fetch_frame,
 )
+
+# Where ImageEntity gets Home Assistant's shared web client (its module
+# moved between Home Assistant versions)
+IMAGE_CLIENT = f"{ImageEntity.__module__}.get_async_client"
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -461,7 +466,7 @@ async def test_image_entity(coordinator: RadarCoordinator) -> None:
     await update_at(coordinator, T0)
     # ImageEntity asks Home Assistant for its shared web client
     with (
-        patch("homeassistant.components.image.get_async_client"),
+        patch(IMAGE_CLIENT),
         patch(
             "custom_components.idokep_weather_and_forecast.image.translation"
             ".async_get_cached_translations",
@@ -660,7 +665,7 @@ def test_parse_http_date(value: str | None, expected: datetime | None) -> None:
 def _patch_image_setup() -> tuple[object, object]:
     """Patch the web client and translations the image needs."""
     return (
-        patch("homeassistant.components.image.get_async_client"),
+        patch(IMAGE_CLIENT),
         patch(
             "custom_components.idokep_weather_and_forecast.image.translation"
             ".async_get_cached_translations",

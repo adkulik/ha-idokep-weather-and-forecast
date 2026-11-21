@@ -343,7 +343,7 @@ class TestIdokepApiClientWeatherScraping:
         mock_session.get = Mock(return_value=mock_response)
 
         with patch(
-            "custom_components.idokep_weather_and_forecast.api.async_timeout.timeout"
+            "custom_components.idokep_weather_and_forecast.api.asyncio.timeout"
         ):
             result = await api_client.async_get_current_weather("Budapest")
 
@@ -369,7 +369,7 @@ class TestIdokepApiClientWeatherScraping:
         mock_session.get = Mock(return_value=mock_response)
 
         with patch(
-            "custom_components.idokep_weather_and_forecast.api.async_timeout.timeout"
+            "custom_components.idokep_weather_and_forecast.api.asyncio.timeout"
         ):
             result = await api_client.async_get_hourly_forecast("Budapest")
 
@@ -474,7 +474,7 @@ class TestIdokepApiClientWeatherScraping:
         mock_session.get = Mock(return_value=mock_response)
 
         with patch(
-            "custom_components.idokep_weather_and_forecast.api.async_timeout.timeout"
+            "custom_components.idokep_weather_and_forecast.api.asyncio.timeout"
         ):
             result = await api_client.async_get_hourly_forecast("Budapest")
 
@@ -513,7 +513,7 @@ class TestIdokepApiClientWeatherScraping:
         mock_session.get = Mock(return_value=mock_response)
 
         with patch(
-            "custom_components.idokep_weather_and_forecast.api.async_timeout.timeout"
+            "custom_components.idokep_weather_and_forecast.api.asyncio.timeout"
         ):
             result = await api_client.async_get_hourly_forecast("Budapest")
 

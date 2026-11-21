@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import datetime as dt
 import html
@@ -12,7 +13,6 @@ from abc import ABC, abstractmethod
 from typing import Any, ClassVar
 
 import aiohttp
-import async_timeout
 from bs4 import BeautifulSoup, Comment, Tag
 
 try:
@@ -330,7 +330,7 @@ class HttpClient:
         """Get HTML content from URL with error handling."""
         try:
             async with (
-                async_timeout.timeout(IdokepConfig.TIMEOUT),
+                asyncio.timeout(IdokepConfig.TIMEOUT),
                 self._session.get(url, headers=_BROWSER_HEADERS) as response,
             ):
                 response.raise_for_status()

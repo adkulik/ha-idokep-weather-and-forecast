@@ -18,7 +18,7 @@ from homeassistant.const import (
     DEGREE,
     PERCENTAGE,
     UV_INDEX,
-    CONCENTRATION_GRAMS_PER_CUBIC_METER,
+    UnitOfDensity,
     UnitOfIrradiance,
     UnitOfLength,
     UnitOfPrecipitationDepth,
@@ -395,7 +395,7 @@ STATION_CALCULATED_DESCRIPTIONS = (
     IdokepCalculatedSensorEntityDescription(
         key="absolute_humidity",
         translation_key="station_absolute_humidity",
-        native_unit_of_measurement=CONCENTRATION_GRAMS_PER_CUBIC_METER,
+        native_unit_of_measurement=UnitOfDensity.GRAMS_PER_CUBIC_METER,
         suggested_display_precision=DISPLAY_PRECISION,
         device_class=SensorDeviceClass.ABSOLUTE_HUMIDITY,
         inputs=("hom", "rh"),
