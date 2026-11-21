@@ -1,5 +1,8 @@
 """Unit tests for the Időkép coordinator and its fetch schedules."""
 
+# Tests reach into the integration's private helpers
+# pylint: disable=protected-access
+
 from __future__ import annotations
 
 import json

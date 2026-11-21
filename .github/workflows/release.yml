@@ -2,7 +2,7 @@ name: Release
 
 # Publishes a GitHub release (which HACS offers as an update) when a tag is
 # pushed. The tag must equal the version in manifest.json, e.g.:
-#   git tag 1.4.1 && git push origin 1.4.1
+#   git tag 1.2.3 && git push origin 1.2.3
 
 on:
   push:

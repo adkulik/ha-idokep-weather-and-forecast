@@ -1,5 +1,8 @@
 """Tests for the optional weather station (automata) device."""
 
+# Tests reach into the integration's private helpers
+# pylint: disable=protected-access
+
 from __future__ import annotations
 
 import math
@@ -336,6 +339,8 @@ def test_merge_without_fresh_readings() -> None:
     data = merge_readings([stale], "priority")
 
     assert data.values == {"hom": None}
+    # An empty dict, not just a falsy value
+    # pylint: disable-next=use-implicit-booleaness-not-comparison
     assert data.sources == {}
     assert data.available == {"hom"}
     assert data.measured == NOW - timedelta(hours=3)

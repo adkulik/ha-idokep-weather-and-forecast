@@ -1,5 +1,8 @@
 """Unit tests for the Időkép API client."""
 
+# Tests reach into the integration's private helpers
+# pylint: disable=protected-access, duplicate-code
+
 from __future__ import annotations
 
 import datetime as dt
@@ -868,6 +871,8 @@ class TestAlertParserHelpers:
 
     def test_no_level_no_alert(self) -> None:
         """A text without a level gives nothing."""
+        # An empty list or dict, not just a falsy value
+        # pylint: disable-next=use-implicit-booleaness-not-comparison
         assert AlertParser._alerts_from_text("zivatar várható") == []
 
     @pytest.mark.parametrize(
@@ -1078,6 +1083,9 @@ class TestHourlyParserBranches:
         fixed_now = dt.datetime(2026, 10, 29, 16, 20, tzinfo=local_tz)
 
         class FrozenDateTime(dt.datetime):
+
+            """The real datetime class, stopped at a fixed time."""
+
             @classmethod
             def now(cls, tz: dt.tzinfo | None = None) -> dt.datetime:
                 return fixed_now.astimezone(tz)
@@ -1113,6 +1121,9 @@ class TestHourlyParserBranches:
         fixed_now = dt.datetime(2026, 10, 31, 21, 10, tzinfo=local_tz)
 
         class FrozenDateTime(dt.datetime):
+
+            """The real datetime class, stopped at a fixed time."""
+
             @classmethod
             def now(cls, tz: dt.tzinfo | None = None) -> dt.datetime:
                 return fixed_now.astimezone(tz)
@@ -1153,6 +1164,9 @@ class TestHourlyParserBranches:
         """Parse wind cards for the given hours with the clock frozen at now."""
 
         class FrozenDateTime(dt.datetime):
+
+            """The real datetime class, stopped at a fixed time."""
+
             @classmethod
             def now(cls, tz: dt.tzinfo | None = None) -> dt.datetime:
                 return now.astimezone(tz)
@@ -1311,6 +1325,9 @@ class TestDailyParserBranches:
         fixed_utc = dt.datetime(2025, 6, 1, 23, 30, tzinfo=dt.UTC)
 
         class FrozenDateTime(dt.datetime):
+
+            """The real datetime class, stopped at a fixed time."""
+
             @classmethod
             def now(cls, tz: dt.tzinfo | None = None) -> dt.datetime:
                 return fixed_utc.astimezone(tz)
@@ -1507,6 +1524,9 @@ def frozen_now(*args: int) -> type[dt.datetime]:
     fixed = dt.datetime(*args, tzinfo=zoneinfo.ZoneInfo("Europe/Budapest"))
 
     class FrozenDateTime(dt.datetime):
+
+        """The real datetime class, stopped at a fixed time."""
+
         @classmethod
         def now(cls, tz: dt.tzinfo | None = None) -> dt.datetime:
             return fixed.astimezone(tz)
@@ -1568,6 +1588,8 @@ class TestTodayMinMax:
     def test_never_takes_tomorrow_as_today(self) -> None:
         """Evening on a fresh start: the strip starts with tomorrow, no value."""
         parser = DailyForecastParser()
+        # An empty list or dict, not just a falsy value
+        # pylint: disable-next=use-implicit-booleaness-not-comparison
         assert self.parse_at(parser, FRI, 2026, 10, 29, 20, 51) == {}
 
     def test_keeps_todays_values_after_column_is_dropped(self) -> None:
@@ -1590,6 +1612,8 @@ class TestTodayMinMax:
         # ...and without any column for the 30th there is no value at all
         fresh = DailyForecastParser()
         self.parse_at(fresh, THU, 2026, 10, 29, 10, 0)
+        # An empty list or dict, not just a falsy value
+        # pylint: disable-next=use-implicit-booleaness-not-comparison
         assert self.parse_at(fresh, sat, 2026, 10, 30, 0, 5) == {}
 
     @pytest.mark.asyncio
@@ -1701,7 +1725,10 @@ class TestDailyForecastDates:
                 result = parser.parse(BeautifulSoup(html, "html.parser"))
             return [item["datetime"] for item in result["daily_forecast"]]
 
-        assert dates_at(THU + FRI, 2026, 10, 29, 10, 0) == ["2026-10-29T00:00:00+01:00", "2026-10-30T00:00:00+01:00"]
+        assert dates_at(THU + FRI, 2026, 10, 29, 10, 0) == [
+            "2026-10-29T00:00:00+01:00",
+            "2026-10-30T00:00:00+01:00",
+        ]
         # Evening: the page starts with Friday, today's entry is put back
         assert dates_at(FRI + sat, 2026, 10, 29, 21, 0) == [
             "2026-10-29T00:00:00+01:00",
@@ -1709,7 +1736,10 @@ class TestDailyForecastDates:
             "2026-10-31T00:00:00+01:00",
         ]
         # After midnight Thursday is gone for good
-        assert dates_at(FRI + sat, 2026, 10, 30, 0, 0) == ["2026-10-30T00:00:00+01:00", "2026-10-31T00:00:00+01:00"]
+        assert dates_at(FRI + sat, 2026, 10, 30, 0, 0) == [
+            "2026-10-30T00:00:00+01:00",
+            "2026-10-31T00:00:00+01:00",
+        ]
 
     def test_kept_today_entry_is_the_full_forecast(self) -> None:
         """The kept entry has today's temperatures, condition etc."""
@@ -1836,7 +1866,7 @@ class TestWindStrength:
 
 
 @pytest.mark.parametrize(
-    ("text", "bar", "expected"),
+    ("text", "bar_height", "expected"),
     [
         ("5 mm", 11, 5.0),
         ("0,5 mm", None, 0.5),
@@ -1846,10 +1876,12 @@ class TestWindStrength:
         ("", None, 0),
     ],
 )
-def test_daily_precipitation(text: str, bar: int | None, expected: float) -> None:
+def test_daily_precipitation(text: str, bar_height: int | None, expected: float) -> None:
     """The printed amount (with decimals), else the bar's: (height - 1) / 2."""
     bar_html = (
-        f'<div class="ik rainlevel blue" style="height: {bar}px;"></div>' if bar else ""
+        f'<div class="ik rainlevel blue" style="height: {bar_height}px;"></div>'
+        if bar_height
+        else ""
     )
     col = BeautifulSoup(
         f'<div class="ik dailyForecastCol"><a data-bs-content="x">'

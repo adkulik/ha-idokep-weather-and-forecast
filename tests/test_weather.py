@@ -1,5 +1,8 @@
 """Unit tests for the Időkép weather entity."""
 
+# Tests reach into the integration's private helpers
+# pylint: disable=protected-access, duplicate-code
+
 from __future__ import annotations
 
 from unittest.mock import Mock, patch
@@ -23,7 +26,7 @@ from custom_components.idokep_weather_and_forecast.weather import (
 )
 
 
-class TestIdokepWeatherEntity:
+class TestIdokepWeatherEntity:  # pylint: disable=too-many-public-methods
     """Test cases for IdokepWeatherEntity."""
 
     def test_init(self, mock_coordinator: Mock) -> None:

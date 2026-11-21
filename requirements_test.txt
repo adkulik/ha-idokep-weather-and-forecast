@@ -1,6 +1,8 @@
-# Development and CI: run the tests and pylint
-homeassistant
+# The integration's own packages, as in manifest.json
 beautifulsoup4
+
+# Home Assistant and the test and check tools
+homeassistant
 pylint
 pytest
 pytest-asyncio

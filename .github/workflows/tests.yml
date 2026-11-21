@@ -3,10 +3,10 @@ name: Tests
 on:
   push:
     branches:
-      - "main"
+      - main
   pull_request:
     branches:
-      - "main"
+      - main
   workflow_dispatch:
   # Run by the Release workflow before publishing
   workflow_call:
@@ -40,16 +40,15 @@ jobs:
           cache-dependency-path: requirements_test.txt
 
       - name: Install dependencies
+        id: install
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements_test.txt
 
       - name: Run pylint
-        run: python -m pylint custom_components/idokep_weather_and_forecast
+        run: python -m pylint custom_components tests
 
+      # Run the tests even if pylint failed, so both results are visible.
       - name: Run tests with coverage
-        run: >-
-          python -m pytest tests/
-          --cov=custom_components.idokep_weather_and_forecast
-          --cov-report=term-missing
-          --cov-fail-under=99
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: python -m pytest

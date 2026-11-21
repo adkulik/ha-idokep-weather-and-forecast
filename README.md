@@ -17,6 +17,13 @@ Az integráció az idokep.hu nyilvános oldalait olvassa (nincs hivatalos API, f
 - Magyar és angol fordítás, a Home Assistant nyelvének megfelelően
 - Csak a szükséges oldalakat tölti le, és a legutóbbi jó adatokat lemezre menti, így újraindítás után is azonnal van adat
 
+## Követelmények
+
+- Home Assistant 2026.7 vagy újabb
+- Internetkapcsolat a `www.idokep.hu` eléréséhez
+
+A szükséges Python-csomagot (beautifulsoup4) a Home Assistant telepíti.
+
 ## Eszközök és entitások
 
 Minden felvett bejegyzéshez (településhez) az alábbiak jönnek létre. A `<Név>` a beállításkor megadott név. Az eszközök neve a Home Assistant nyelvét követi (angolul `<Név> Forecast`, `<Név> Weather`).
@@ -112,8 +119,11 @@ Az első bejegyzés felvételekor automatikusan létrejön egy **Radar** bejegyz
 
 ### Kézzel
 
-1. Másold a `custom_components/idokep_weather_and_forecast` mappát a Home Assistant `config/custom_components/` mappájába.
-2. Indítsd újra a Home Assistantot.
+1. Töltsd le az `idokep_weather_and_forecast-<verzió>.zip` fájlt a [legutóbbi kiadásból](https://github.com/ztarsoly/ha-idokep-weather-and-forecast/releases/latest).
+2. Csomagold ki a Home Assistant konfigurációs mappájában (ahol a `configuration.yaml` van) lévő `custom_components` mappába; ha nincs ilyen mappa, hozd létre. A végén a `custom_components/idokep_weather_and_forecast/manifest.json` fájlnak kell meglennie.
+3. Indítsd újra a Home Assistantot.
+
+Frissítéshez töröld a `custom_components/idokep_weather_and_forecast` mappát, csomagold ki ugyanígy az új kiadás zip-fájlját, és indítsd újra a Home Assistantot.
 
 ## Beállítás
 

@@ -1,5 +1,8 @@
 """Tests for the national Radar service: GIF, frame fetching, entry, entity."""
 
+# Tests reach into the integration's private helpers
+# pylint: disable=protected-access
+
 from __future__ import annotations
 
 import io
@@ -10,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
+import aiohttp
 import pytest
 from homeassistant import config_entries
 from homeassistant.components.image import ImageEntity
@@ -148,8 +152,6 @@ async def test_fetch_frame_unchanged_returns_none() -> None:
 @pytest.mark.asyncio
 async def test_fetch_frame_error() -> None:
     """Network errors become IdokepApiClientCommunicationError."""
-    import aiohttp
-
     session = Mock()
     session.get = Mock(side_effect=aiohttp.ClientError("down"))
     with pytest.raises(IdokepApiClientCommunicationError):

@@ -1,5 +1,8 @@
 """Tests for the Időkép icon translations (icons.json)."""
 
+# Tests reach into the integration's private helpers
+# pylint: disable=protected-access
+
 from __future__ import annotations
 
 import json

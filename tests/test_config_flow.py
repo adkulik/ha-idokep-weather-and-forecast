@@ -1,5 +1,8 @@
 """Tests for the Configure (options) dialog of a location entry."""
 
+# Tests reach into the integration's private helpers
+# pylint: disable=protected-access
+
 from __future__ import annotations
 
 from typing import Any
@@ -85,7 +88,7 @@ async def test_same_location_only_saves_station() -> None:
     """With the location unchanged, only the station option is saved."""
     flow, _ = _flow()
     location_check, station_check = _patch_checks()
-    with location_check as check_location, station_check:
+    with station_check, location_check as check_location:
         result = await flow.async_step_init(
             {"name": "Debrecen-Józsa", "location": "Debrecen-Józsa", "station": "ha0kaistvan"}
         )
@@ -131,7 +134,9 @@ async def test_new_location_with_new_station_reloads_once() -> None:
     )
     location_check, station_check = _patch_checks()
     with location_check, station_check:
-        await flow.async_step_init({"name": "Debrecen-Józsa", "location": "Debrecen", "station": "ha0kaistvan"})
+        await flow.async_step_init(
+            {"name": "Debrecen-Józsa", "location": "Debrecen", "station": "ha0kaistvan"}
+        )
 
     flow.hass.config_entries.async_schedule_reload.assert_not_called()
 
@@ -157,7 +162,9 @@ async def test_unknown_location_is_refused() -> None:
     flow, _ = _flow()
     location_check, station_check = _patch_checks(location_error="connection")
     with location_check, station_check:
-        result = await flow.async_step_init({"name": "Debrecen-Józsa", "location": "Nowhere", "station": ""})
+        result = await flow.async_step_init(
+            {"name": "Debrecen-Józsa", "location": "Nowhere", "station": ""}
+        )
 
     assert result["type"] == FlowResultType.FORM
     assert result["errors"] == {"base": "connection"}
@@ -170,7 +177,9 @@ async def test_bad_station_does_not_move_location() -> None:
     flow, _ = _flow()
     location_check, station_check = _patch_checks(station_error=("station", "x"))
     with location_check, station_check:
-        result = await flow.async_step_init({"name": "Debrecen-Józsa", "location": "Debrecen", "station": "x"})
+        result = await flow.async_step_init(
+            {"name": "Debrecen-Józsa", "location": "Debrecen", "station": "x"}
+        )
 
     assert result["errors"] == {"station": "station"}
     assert result["description_placeholders"] == {"code": "x"}
