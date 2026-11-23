@@ -107,15 +107,11 @@ def test_restore_keeps_only_valid_alerts() -> None:
 class TestRestoreCurrent:
     """Current conditions page."""
 
-    def test_fresh_restores_everything(self) -> None:
-        """Under an hour old: all values come back."""
-        item = saved(CURRENT_DATA, NOW - timedelta(minutes=40))
+    @pytest.mark.parametrize("age", [timedelta(minutes=40), timedelta(days=2)])
+    def test_restores_everything_however_old(self, age: timedelta) -> None:
+        """The values come back until the next successful fetch replaces them."""
+        item = saved(CURRENT_DATA, NOW - age)
         assert restore(CURRENT, item, NOW) == CURRENT_DATA
-
-    def test_old_restores_nothing(self) -> None:
-        """Older than an hour: the current reading is no longer valid."""
-        item = saved(CURRENT_DATA, NOW - timedelta(hours=3))
-        assert restore(CURRENT, item, NOW) == {}
 
 
 class TestRestoreForecast:
@@ -147,7 +143,7 @@ class TestRestoreForecast:
 
     def test_old_same_day_keeps_forecasts_and_todays_values(self) -> None:
         """
-        Old alerts and warnings are dropped.
+        Today's warnings are kept; alerts over 3 hours old are dropped.
 
         The current hour's wind and precipitation would come from its item;
         this one has none, and no storm.
@@ -158,6 +154,8 @@ class TestRestoreForecast:
             "daily_forecast": FORECAST_DATA["daily_forecast"][1:],
             "temperature_max_today": 16,
             "temperature_min_today": 6,
+            "warnings": FORECAST_DATA["warnings"],
+            "warning_level": "orange",
             "storm_expected": False,
         }
 
@@ -232,12 +230,12 @@ def test_restore_skips_hourly_items_without_a_valid_time() -> None:
         (UV_MAP, {"uv_index": 0.3}),
     ],
 )
-def test_restore_station_maps_only_if_fresh(source: str, data: dict) -> None:
-    """The values from the maps are kept for an hour."""
+def test_restore_maps_however_old(source: str, data: dict) -> None:
+    """The values from the maps come back, however old."""
     fresh = {"fetched": (NOW - timedelta(minutes=30)).isoformat(), "data": data}
-    old = {"fetched": (NOW - timedelta(minutes=90)).isoformat(), "data": data}
+    old = {"fetched": (NOW - timedelta(days=2)).isoformat(), "data": data}
     assert restore(source, fresh, NOW) == data
-    assert restore(source, old, NOW) == {}
+    assert restore(source, old, NOW) == data
 
 
 def test_restore_storm_value_only_if_fresh() -> None:
@@ -396,14 +394,27 @@ def test_restore_after_an_hour_without_the_current_hour() -> None:
     assert result["storm_expected"] is False
 
 
-def test_restore_alerts_and_warnings_for_three_hours() -> None:
-    """The hourly cards' alerts cover 3 hours; the banners' warnings are kept as long."""
-    data = {
-        "alerts": [{"type": "wind", "level": "yellow"}],
-        "warnings": [{"type": "fog", "level": "yellow"}],
+ALERT_DATA = {
+    "alerts": [{"type": "wind", "level": "yellow"}],
+    "warnings": [{"type": "fog", "level": "yellow"}],
+    "warning_level": "yellow",
+}
+
+
+def test_restore_alerts_for_three_hours() -> None:
+    """The hourly cards' alerts cover the current and the next two hours."""
+    fresh = saved(ALERT_DATA, NOW - timedelta(hours=2, minutes=50))
+    old = saved(ALERT_DATA, NOW - timedelta(hours=3, minutes=10))
+    assert restore(HOURLY, fresh, NOW)["alerts"] == ALERT_DATA["alerts"]
+    assert "alerts" not in restore(HOURLY, old, NOW)
+
+
+def test_restore_warnings_on_the_same_day() -> None:
+    """The banners' warnings are for the day: kept until midnight, however old."""
+    morning = saved(ALERT_DATA, NOW.replace(hour=0, minute=5))  # 20 hours earlier
+    yesterday = saved(ALERT_DATA, NOW.replace(hour=0, minute=0) - timedelta(minutes=5))
+    assert restore(HOURLY, morning, NOW) == {
+        "warnings": ALERT_DATA["warnings"],
         "warning_level": "yellow",
     }
-    fresh = {"fetched": (NOW - timedelta(hours=2, minutes=50)).isoformat(), "data": data}
-    old = {"fetched": (NOW - timedelta(hours=3, minutes=10)).isoformat(), "data": data}
-    assert restore(HOURLY, fresh, NOW) == data
-    assert restore(HOURLY, old, NOW) == {}
+    assert restore(HOURLY, yesterday, NOW) == {}

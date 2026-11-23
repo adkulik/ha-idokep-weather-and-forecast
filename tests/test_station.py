@@ -44,8 +44,6 @@ from custom_components.idokep_weather_and_forecast.station import (
     decode_station,
     fetch_station,
     fresh_readings,
-    readings_from_json,
-    readings_to_json,
     Reading,
     StationReadings,
     latest_readings,
@@ -360,7 +358,6 @@ def _coordinator() -> StationCoordinator:
     coordinator.async_refresh = AsyncMock()
     coordinator._kept = {}
     coordinator.retrying = False
-    coordinator._store = None
     return coordinator
 
 
@@ -812,22 +809,13 @@ def test_station_sensor_without_data_has_no_attributes() -> None:
     assert IdokepStationSensor(_station_mock(None), hom).extra_state_attributes is None
 
 
-# ---- keeping and saving the readings ----------------------------------------------
+# ---- keeping the readings -------------------------------------------------------
 
 
 def _utcnow(now: datetime = NOW) -> object:
     return patch(
         "custom_components.idokep_weather_and_forecast.station.dt_util.utcnow",
         return_value=now,
-    )
-
-
-def _kept_station() -> StationReadings:
-    return StationReadings(
-        "jozsamet",
-        {"hom": Reading(7.5, NOW - timedelta(minutes=5), "jozsamet")},
-        frozenset({"hom", "rh"}),
-        NOW - timedelta(minutes=5),
     )
 
 
@@ -846,30 +834,6 @@ def test_fresh_readings_drops_those_over_the_age_limit() -> None:
     assert list(fresh.readings) == ["hom"]
     assert fresh.available == {"hom", "rh"}
     assert fresh.last == station.last
-
-
-def test_readings_json_round_trip() -> None:
-    """Saved readings come back as they were."""
-    station = _kept_station()
-    assert readings_from_json("jozsamet", readings_to_json(station)) == station
-    empty = StationReadings("olig13", {}, frozenset(), None)
-    assert readings_from_json("olig13", readings_to_json(empty)) == empty
-
-
-@pytest.mark.parametrize(
-    "saved",
-    [
-        None,
-        "x",
-        {},
-        {"readings": {"hom": {"value": "warm", "time": NOW.isoformat()}}},
-        {"readings": {"hom": {"value": 1, "time": "y"}}, "available": [], "last": None},
-        {"readings": [], "available": [], "last": None},
-    ],
-)
-def test_readings_from_broken_json(saved: object) -> None:
-    """A damaged file never breaks setup."""
-    assert readings_from_json("jozsamet", saved) is None
 
 
 @pytest.mark.asyncio
@@ -893,76 +857,3 @@ async def test_failed_station_keeps_its_last_readings() -> None:
         data = await coordinator._async_update_data()
     assert data.values == {"hom": None, "rh": None}
     assert data.available == {"hom", "rh"}
-
-
-@pytest.mark.asyncio
-async def test_successful_fetch_is_saved() -> None:
-    """The readings are written to disk after a fetch, not after a failure."""
-    coordinator = _coordinator()
-    coordinator._store = Mock()
-    now = int(NOW.timestamp())
-    good = StationSeries(times=[now - 60], series={"hom": [7.5]})
-    with _fetching(coordinator, {"jozsamet": good}), _utcnow():
-        await coordinator._async_update_data()
-    save = coordinator._store.async_delay_save
-    save.assert_called_once()
-    assert save.call_args.args[0]() == {
-        "stations": {"jozsamet": readings_to_json(coordinator._kept["jozsamet"])}
-    }
-
-    save.reset_mock()
-    down = IdokepApiClientCommunicationError("down")
-    with _fetching(coordinator, {"jozsamet": down}), _utcnow():
-        await coordinator._async_update_data()
-    save.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_restore_loads_the_saved_readings_of_the_stations() -> None:
-    """Saved readings of the configured stations come back; others are ignored."""
-    coordinator = _coordinator()
-    coordinator.hass = Mock()
-    coordinator.logger = Mock()
-    coordinator.codes = ["jozsamet", "olig13"]
-    station = _kept_station()
-    saved = {
-        "stations": {
-            "jozsamet": readings_to_json(station),
-            "olig13": "broken",
-            "removed": readings_to_json(station),
-        }
-    }
-    with patch(
-        "custom_components.idokep_weather_and_forecast.station.Store"
-    ) as store_class:
-        store_class.return_value.async_load = AsyncMock(return_value=saved)
-        await coordinator.async_restore()
-
-    assert store_class.call_args.args[1:] == (
-        1,
-        "idokep_weather_and_forecast.entry1.station",
-    )
-    assert coordinator._kept == {"jozsamet": station}
-
-    # The stations are unreachable after the restart: the saved readings show
-    down = IdokepApiClientCommunicationError("down")
-    with _fetching(coordinator, {"jozsamet": down, "olig13": down}), _utcnow():
-        data = await coordinator._async_update_data()
-    assert data.values == {"hom": 7.5, "rh": None}
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("saved", [None, [], {"stations": "x"}])
-async def test_restore_without_usable_saved_data(saved: object) -> None:
-    """No file, or a damaged one: nothing is restored."""
-    coordinator = _coordinator()
-    coordinator.hass = Mock()
-    coordinator.codes = ["jozsamet"]
-    with patch(
-        "custom_components.idokep_weather_and_forecast.station.Store"
-    ) as store_class:
-        store_class.return_value.async_load = AsyncMock(return_value=saved)
-        await coordinator.async_restore()
-    # An empty dict, not just a falsy value
-    # pylint: disable-next=use-implicit-booleaness-not-comparison
-    assert coordinator._kept == {}

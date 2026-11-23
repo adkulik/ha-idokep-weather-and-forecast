@@ -307,13 +307,15 @@ class TestCoordinatorUpdates:
         assert data["storm_expected"] is False
 
     @pytest.mark.asyncio
-    async def test_kept_alerts_expire_after_three_hours(
+    async def test_kept_alerts_and_warnings_expire(
         self, coordinator: IdokepDataUpdateCoordinator, client: Mock
     ) -> None:
-        """The alerts of a forecast that can't be downloaded again don't stay."""
+        """While downloads fail, alerts go after 3 hours, warnings at midnight."""
         client.async_get_hourly_forecast.return_value = {
             **HOURLY_DATA,
             "alerts": [{"type": "wind", "level": "yellow"}],
+            "warnings": [{"type": "fog", "level": "yellow"}],
+            "warning_level": "yellow",
         }
         await update_at(coordinator, local(2026, 10, 29, 12, 7))
         client.async_get_hourly_forecast.side_effect = (
@@ -324,6 +326,11 @@ class TestCoordinatorUpdates:
         assert data["alerts"] == [{"type": "wind", "level": "yellow"}]
         data = await update_at(coordinator, local(2026, 10, 29, 15, 10))
         assert "alerts" not in data
+        assert data["warning_level"] == "yellow"
+
+        data = await update_at(coordinator, local(2026, 10, 30, 0, 0))
+        assert "warnings" not in data
+        assert "warning_level" not in data
 
     @pytest.mark.asyncio
     async def test_page_without_data_is_a_failure(
@@ -731,7 +738,12 @@ async def test_restore_ignores_unknown_and_expired_pages(
                 "fetched": local(2026, 10, 30, 12, 45).isoformat(),
                 "data": {},
             },
-            # Saved the day before: current conditions are kept for an hour only
+            # Saved the day before: its hours and days are all over
+            HOURLY: {
+                "fetched": local(2026, 10, 29, 12, 45).isoformat(),
+                "data": HOURLY_DATA,
+            },
+            # Current conditions are kept however old
             CURRENT: {
                 "fetched": local(2026, 10, 29, 12, 45).isoformat(),
                 "data": CURRENT_DATA,
@@ -743,7 +755,8 @@ async def test_restore_ignores_unknown_and_expired_pages(
     ):
         await coordinator.async_restore()
 
-    assert coordinator._source_data[CURRENT] == {}
+    assert coordinator._source_data[HOURLY] == {}
+    assert coordinator._source_data[CURRENT] == CURRENT_DATA
     assert "unknown_page" not in coordinator._source_data
 
 

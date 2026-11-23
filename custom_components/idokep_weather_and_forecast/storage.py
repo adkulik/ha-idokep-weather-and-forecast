@@ -2,16 +2,17 @@
 Saving the last good data of each idokep.hu page to disk.
 
 The coordinator keeps one file per config entry under .storage/ (Home
-Assistant's Store helper). After a restart the saved data is restored, but
-only what is still valid:
+Assistant's Store helper). After a restart the saved data is restored:
 
 - forecasts: hours and days that have not passed yet
 - today's max/min: only if saved today
-- alerts and warnings: only if fetched within ALERTS_MAX_AGE
+- alerts: only if fetched within ALERTS_MAX_AGE (they cover the next hours)
+- warnings: only if fetched today (they are for the day)
 - the current wind, precipitation and storm value: if fetched in the hour
   now running, else from the forecast's item for that hour
-- everything else (current conditions, humidity, pressure): only if fetched
-  within MAX_AGE, since its age cannot be checked otherwise
+- everything else (current conditions, humidity, pressure, UV): however
+  old, so the sensors never start without a value; the next successful fetch
+  replaces it
 
 The coordinator also applies the forecast rules (forecast_as_of) to the kept
 forecast while the page can't be downloaded, so the current hour moves on.
@@ -43,10 +44,7 @@ from .const import (
 )
 
 STORAGE_VERSION = 1
-# Restored data older than this is only used where it can be checked by date
-MAX_AGE = timedelta(hours=1)
-# The hourly cards' alerts are for the 3 hours after the fetch; the banners'
-# warnings are kept as long
+# The hourly cards' alerts are for the current and the next two hours
 ALERTS_MAX_AGE = timedelta(hours=3)
 # The forecast page's values for the hour now running
 CURRENT_KEYS = (*(key for _, key in CURRENT_HOUR_KEYS), "storm_expected")
@@ -63,7 +61,7 @@ def storage_key(entry_id: str) -> str:
 
 
 def station_storage_key(entry_id: str) -> str:
-    """Return the Store key of a config entry's weather station readings."""
+    """Return the Store key of the station readings saved by 1.12.7-1.12.8."""
     return f"{DOMAIN}.{entry_id}.station"
 
 
@@ -91,10 +89,10 @@ def restore(source: str, saved: dict[str, Any], now: datetime) -> dict[str, Any]
 
 
 def _restore_current(
-    data: dict[str, Any], fetched: datetime, now: datetime
+    data: dict[str, Any], _fetched: datetime, _now: datetime
 ) -> dict[str, Any]:
-    """Restore current conditions: only if fresh."""
-    return data if now - fetched <= MAX_AGE else {}
+    """Restore current conditions and map values, however old."""
+    return data
 
 
 def forecast_as_of(
@@ -104,8 +102,8 @@ def forecast_as_of(
     Return the forecast page's data fetched at fetched as it stands at now.
 
     Used both on restore and while the page can't be downloaded. Hours not
-    yet over, days from today on, today's max/min if fetched today, alerts
-    and warnings for ALERTS_MAX_AGE. The current wind, precipitation and
+    yet over, days from today on, today's max/min and warnings if fetched
+    today, alerts for ALERTS_MAX_AGE. The current wind, precipitation and
     storm value are kept within the hour they were fetched in, after that
     taken from the item of the hour now running.
     """
@@ -117,13 +115,12 @@ def forecast_as_of(
     if daily := _days_from(data.get("daily_forecast", []), today):
         result["daily_forecast"] = daily
 
+    if now - fetched <= ALERTS_MAX_AGE and "alerts" in data:
+        result["alerts"] = _valid_alerts(data["alerts"])
     if dt_util.as_local(fetched).date() == today:
         result.update({key: data[key] for key in TODAY_KEYS if key in data})
-
-    if now - fetched <= ALERTS_MAX_AGE:
-        for key in ("alerts", "warnings"):
-            if key in data:
-                result[key] = _valid_alerts(data[key])
+        if "warnings" in data:
+            result["warnings"] = _valid_alerts(data["warnings"])
         if "warning_level" in data:
             result["warning_level"] = data["warning_level"]
 
