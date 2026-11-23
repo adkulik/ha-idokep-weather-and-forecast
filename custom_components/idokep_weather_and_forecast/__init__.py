@@ -29,7 +29,7 @@ from .station import (
     station_codes,
     station_identifier,
 )
-from .storage import STORAGE_VERSION, storage_key
+from .storage import STORAGE_VERSION, station_storage_key, storage_key
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -128,9 +128,13 @@ async def async_setup_entry(
             max_age=max_age_minutes(entry),
         )
         entry.runtime_data.station = station
+        # Start from the readings saved before the restart (while within the
+        # age limit), so the sensors have values even if the station can't
+        # be reached now
+        await station.async_restore()
         # Not a first refresh: an unreachable station must not stop the
-        # forecast from setting up (its sensors are unavailable until the
-        # next successful fetch)
+        # forecast from setting up (without saved readings its sensors are
+        # unavailable until the next successful fetch)
         await station.async_refresh()
     else:
         _remove_station_device(hass, entry)
@@ -190,4 +194,5 @@ async def async_remove_entry(
     entry: IdokepConfigEntry,
 ) -> None:
     """Delete the entry's saved data when the integration entry is removed."""
-    await Store(hass, STORAGE_VERSION, storage_key(entry.entry_id)).async_remove()
+    for key in (storage_key(entry.entry_id), station_storage_key(entry.entry_id)):
+        await Store(hass, STORAGE_VERSION, key).async_remove()

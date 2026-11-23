@@ -141,6 +141,7 @@ class TestIdokepInit:
         """A station code adds the station coordinator and its timer."""
         mock_hass, mock_entry = self._location_entry({})
         station = Mock()
+        station.async_restore = AsyncMock()
         station.async_refresh = AsyncMock()
 
         with (
@@ -166,7 +167,9 @@ class TestIdokepInit:
         assert mock_station_class.call_args.kwargs["method"] == "priority"
         assert mock_station_class.call_args.kwargs["max_age"] == 60
         assert mock_entry.runtime_data.station is station
-        # A failed station fetch must not fail the entry: no first refresh
+        # The saved readings come first; a failed station fetch must not fail
+        # the entry: no first refresh
+        station.async_restore.assert_awaited_once()
         station.async_refresh.assert_awaited_once()
         mock_track_time.assert_any_call(mock_hass, station.async_tick, second=59)
 
@@ -314,7 +317,7 @@ class TestIdokepInit:
 
     @pytest.mark.asyncio
     async def test_async_remove_entry_deletes_saved_data(self) -> None:
-        """Removing the entry deletes its file under .storage/."""
+        """Removing the entry deletes its files under .storage/."""
         mock_hass = Mock(spec=HomeAssistant)
         mock_entry = Mock(spec=ConfigEntry)
         mock_entry.entry_id = "entry1"
@@ -325,7 +328,8 @@ class TestIdokepInit:
             mock_store_class.return_value.async_remove = AsyncMock()
             await async_remove_entry(mock_hass, mock_entry)
 
-        mock_store_class.assert_called_once_with(
-            mock_hass, 1, "idokep_weather_and_forecast.entry1"
-        )
-        mock_store_class.return_value.async_remove.assert_awaited_once()
+        assert [c.args for c in mock_store_class.call_args_list] == [
+            (mock_hass, 1, "idokep_weather_and_forecast.entry1"),
+            (mock_hass, 1, "idokep_weather_and_forecast.entry1.station"),
+        ]
+        assert mock_store_class.return_value.async_remove.await_count == 2

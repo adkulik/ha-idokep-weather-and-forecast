@@ -544,6 +544,29 @@ def highest_alert_level(items: list[dict[str, str]] | None) -> str | None:
 
 
 
+# The current hour's item values that also serve as "current" values:
+# (hourly item key, data key)
+CURRENT_HOUR_KEYS = (
+    ("wind_bearing", "wind_bearing"),
+    ("wind_strength", "wind_strength"),
+    ("native_wind_speed", "wind_speed"),
+    ("native_wind_gust_speed", "wind_gust_speed"),
+    ("precipitation", "precipitation"),
+    ("precipitation_probability", "precipitation_probability"),
+)
+
+
+def current_hour_values(item: dict[str, Any] | None) -> dict[str, Any]:
+    """Return the "current" wind and precipitation from the current hour's item."""
+    if item is None:
+        return {}
+    return {
+        key: item[item_key]
+        for item_key, key in CURRENT_HOUR_KEYS
+        if item.get(item_key) is not None
+    }
+
+
 class HourlyForecastParser(WeatherParser):
     """
     Parser for hourly forecast data.
@@ -609,20 +632,8 @@ class HourlyForecastParser(WeatherParser):
             forecast = self._with_current_hour(forecast, now)
             self._last_forecast = forecast
             result["hourly_forecast"] = forecast
-            result["storm_expected"] = self._storm_expected(forecast, now)
-            current = self._current_hour_item(forecast, now)
-            # The current hour's wind and precipitation probability also
-            # serve as "current" values
-            for item_key, key in (
-                ("wind_bearing", "wind_bearing"),
-                ("wind_strength", "wind_strength"),
-                ("native_wind_speed", "wind_speed"),
-                ("native_wind_gust_speed", "wind_gust_speed"),
-                ("precipitation", "precipitation"),
-                ("precipitation_probability", "precipitation_probability"),
-            ):
-                if current and current.get(item_key) is not None:
-                    result[key] = current[item_key]
+            result["storm_expected"] = self.storm_expected(forecast, now)
+            result.update(current_hour_values(self._current_hour_item(forecast, now)))
 
         return result
 
@@ -661,7 +672,7 @@ class HourlyForecastParser(WeatherParser):
         return forecast
 
     @staticmethod
-    def _storm_expected(forecast: list[dict[str, Any]], now: dt.datetime) -> bool:
+    def storm_expected(forecast: list[dict[str, Any]], now: dt.datetime) -> bool:
         """Return True if the current or the next hour is stormy."""
         hour = now.replace(minute=0, second=0, microsecond=0)
         end = hour + dt.timedelta(hours=2)

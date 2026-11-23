@@ -22,10 +22,11 @@ import socket
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
 import aiohttp
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
@@ -47,6 +48,7 @@ from .const import (
     MIN_MAX_AGE,
     STATION,
 )
+from .storage import SAVE_DELAY, STORAGE_VERSION, station_storage_key
 
 if TYPE_CHECKING:
     from logging import Logger
@@ -288,6 +290,47 @@ def latest_readings(
     return StationReadings(code, readings, frozenset(available), last)
 
 
+def fresh_readings(
+    station: StationReadings, now: datetime, max_age: int
+) -> StationReadings:
+    """Return a station's kept readings without those now over max_age minutes."""
+    oldest = now - timedelta(minutes=max_age)
+    return StationReadings(
+        station.code,
+        {key: r for key, r in station.readings.items() if r.time >= oldest},
+        station.available,
+        station.last,
+    )
+
+
+def readings_to_json(station: StationReadings) -> dict[str, Any]:
+    """Return a station's readings in a JSON-safe form, for saving."""
+    return {
+        "readings": {
+            key: {"value": reading.value, "time": reading.time.isoformat()}
+            for key, reading in station.readings.items()
+        },
+        "available": sorted(station.available),
+        "last": station.last.isoformat() if station.last else None,
+    }
+
+
+def readings_from_json(code: str, saved: Any) -> StationReadings | None:
+    """Return a station's saved readings (None if not in the expected form)."""
+    try:
+        readings = {
+            key: Reading(
+                float(item["value"]), datetime.fromisoformat(item["time"]), code
+            )
+            for key, item in saved["readings"].items()
+        }
+        last = datetime.fromisoformat(saved["last"]) if saved["last"] else None
+        available = frozenset(saved["available"])
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return None
+    return StationReadings(code, readings, available, last)
+
+
 # Merged values are rounded to 2 decimals
 DECIMALS = 2
 
@@ -384,6 +427,44 @@ class StationCoordinator(DataUpdateCoordinator[StationData]):
         self.codes = codes
         self.method = method
         self.max_age = max_age
+        # Each station's last good readings, used while it can't be read
+        self._kept: dict[str, StationReadings] = {}
+        # True while a station failed: it is retried every minute
+        self.retrying = False
+        # Saved copy of _kept under .storage/ (set up by async_restore)
+        self._store: Store | None = None
+
+    async def async_restore(self) -> None:
+        """
+        Load the readings saved before the last restart.
+
+        Called before the first refresh, so the sensors start with the saved
+        readings even if the stations are unreachable. Readings over the age
+        limit are dropped when the values are merged, as always.
+        """
+        self._store = Store(
+            self.hass,
+            STORAGE_VERSION,
+            station_storage_key(self.config_entry.entry_id),
+        )
+        saved = await self._store.async_load() or {}
+        stations = saved.get("stations") if isinstance(saved, dict) else None
+        if not isinstance(stations, dict):
+            return
+        for code in self.codes:
+            if code in stations and (
+                restored := readings_from_json(code, stations[code])
+            ):
+                self._kept[code] = restored
+                self.logger.debug("Restored saved readings of station %s", code)
+
+    def _data_to_save(self) -> dict[str, Any]:
+        """Return the readings to write to disk."""
+        return {
+            "stations": {
+                code: readings_to_json(station) for code, station in self._kept.items()
+            }
+        }
 
     async def async_tick(self, now: datetime) -> None:
         """
@@ -395,7 +476,11 @@ class StationCoordinator(DataUpdateCoordinator[StationData]):
         """
         if self.config_entry.pref_disable_polling or not self._listeners:
             return
-        if now.minute % CHECK_EVERY_MINUTES and self.last_update_success:
+        if (
+            now.minute % CHECK_EVERY_MINUTES
+            and self.last_update_success
+            and not self.retrying
+        ):
             return
         await self.async_refresh()
 
@@ -403,8 +488,9 @@ class StationCoordinator(DataUpdateCoordinator[StationData]):
         """
         Download every station's file and merge their readings.
 
-        A station that fails is left out this time (the others fill in);
-        the update fails only if none of them could be read.
+        A station that fails is represented by its last good readings (which
+        still count only within the age limit), or else left out; the update
+        fails only if no station has any readings.
         """
         results = await asyncio.gather(
             *(fetch_station(self._session, code) for code in self.codes),
@@ -417,10 +503,16 @@ class StationCoordinator(DataUpdateCoordinator[StationData]):
             if isinstance(result, IdokepApiClientError):
                 self.logger.info("Weather station %s not read: %s", code, result)
                 errors.append(result)
+                if code in self._kept:
+                    stations.append(fresh_readings(self._kept[code], now, self.max_age))
             elif isinstance(result, BaseException):
                 raise result
             else:
-                stations.append(latest_readings(result, code, now, self.max_age))
+                self._kept[code] = latest_readings(result, code, now, self.max_age)
+                stations.append(self._kept[code])
+        self.retrying = bool(errors)
+        if len(errors) < len(self.codes) and self._store is not None:
+            self._store.async_delay_save(self._data_to_save, SAVE_DELAY)
         if not stations:
             raise UpdateFailed(errors[0])
         return merge_readings(stations, self.method)

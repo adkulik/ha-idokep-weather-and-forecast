@@ -158,7 +158,7 @@ A bejegyzés nevét a Home Assistant saját **Átnevezés** funkciójával lehet
 |---|---|---|---|
 | Aktuális időjárás (`/idojaras/`) | hőmérséklet, állapot | 10 percenként (x:00:59, x:10:59, x:20:59, …) | percenként újra |
 | Előrejelzés (`/elorejelzes/`) | óránkénti és napi előrejelzés, mai max/min, szél, riasztások | óránként (x:00:59) | 10 percenként újra |
-| Időjárás-állomások (`/automata/<kód>`) | állomás szenzorai | 5 percenként (x:00:59, x:05:59, …), minden állomás egyszerre | percenként újra, ha egyik sem érhető el |
+| Időjárás-állomások (`/automata/<kód>`) | állomás szenzorai | 5 percenként (x:00:59, x:05:59, …), minden állomás egyszerre | percenként újra, amíg valamelyik nem érhető el |
 | Páratartalom-térkép (`/para`) | páratartalom, harmatpont | 10 percenként (x:00:59, x:10:59, x:20:59, …) | percenként újra |
 | Légnyomástérkép (`/legnyomas`) | légnyomás | 10 percenként (x:00:59, x:10:59, x:20:59, …) | percenként újra |
 | UV-térkép (`/uv`) | UV-B index | 10 percenként (x:00:59, x:10:59, x:20:59, …) | percenként újra |
@@ -170,7 +170,16 @@ A bejegyzés nevét a Home Assistant saját **Átnevezés** funkciójával lehet
 
 ## Adattárolás
 
-Az előrejelzési oldalak és az állomástérképek legutóbbi sikeres adatai a Home Assistant `config/.storage/idokep_weather_and_forecast.<bejegyzés azonosító>` fájljába kerülnek. Újraindítás után csak a még érvényes adatok töltődnek vissza (el nem múlt órák és napok, a mai max/min aznap, a többi adat egy órán belül), így az entitások akkor is kapnak értéket, ha az idokep.hu épp nem érhető el. A bejegyzés törlésekor a fájl is törlődik. Az állomás és a radar adatai nem kerülnek lemezre.
+Az előrejelzési oldalak és az állomástérképek legutóbbi sikeres adatai a Home Assistant `config/.storage/idokep_weather_and_forecast.<bejegyzés azonosító>` fájljába kerülnek. Újraindítás után csak a még érvényes adatok töltődnek vissza:
+
+- el nem múlt órák és napok, a mai max/min aznap;
+- a riasztások és figyelmeztetések 3 órán belül;
+- az aktuális szél, csapadék és zivatar egy órán belül, utána az előrejelzés aktuális órájából;
+- a többi adat egy órán belül.
+
+Az időjárás-állomások legutóbbi mérései a `config/.storage/idokep_weather_and_forecast.<bejegyzés azonosító>.station` fájlba kerülnek, és újraindítás után visszatöltődnek. Ha egy állomás nem érhető el, a szenzorai a legutóbbi méréseit mutatják; a **Mérés maximális kora** beállításnál régebbi mérés itt sem számít.
+
+Így az entitások akkor is kapnak értéket, ha az idokep.hu épp nem érhető el (például egy áramszünet utáni újraindításkor, amíg az internet még nem működik). A bejegyzés törlésekor a fájlok is törlődnek. A radar adatai nem kerülnek lemezre.
 
 ## Megjegyzések
 

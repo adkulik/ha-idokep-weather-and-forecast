@@ -7,8 +7,11 @@ only what is still valid:
 
 - forecasts: hours and days that have not passed yet
 - today's max/min: only if saved today
-- everything else (current conditions, humidity, pressure, alerts, wind):
-  only if fetched within MAX_AGE, since its age cannot be checked otherwise
+- alerts and warnings: only if fetched within ALERTS_MAX_AGE
+- the current wind, precipitation and storm value: if fetched within
+  MAX_AGE, else from the forecast's item for the hour now running
+- everything else (current conditions, humidity, pressure): only if fetched
+  within MAX_AGE, since its age cannot be checked otherwise
 """
 
 from __future__ import annotations
@@ -18,7 +21,15 @@ from typing import Any
 
 from homeassistant.util import dt as dt_util
 
-from .api import ALERT_LEVELS, ALERT_TYPES, TimeUtils, WindStrengthMapper
+from .api import (
+    ALERT_LEVELS,
+    ALERT_TYPES,
+    CURRENT_HOUR_KEYS,
+    HourlyForecastParser,
+    TimeUtils,
+    WindStrengthMapper,
+    current_hour_values,
+)
 from .const import (
     CURRENT,
     DOMAIN,
@@ -31,6 +42,11 @@ from .const import (
 STORAGE_VERSION = 1
 # Restored data older than this is only used where it can be checked by date
 MAX_AGE = timedelta(hours=1)
+# The hourly cards' alerts are for the 3 hours after the fetch; the banners'
+# warnings are kept as long
+ALERTS_MAX_AGE = timedelta(hours=3)
+# The forecast page's values for the hour now running
+CURRENT_KEYS = (*(key for _, key in CURRENT_HOUR_KEYS), "storm_expected")
 # Delay before writing, so several page fetches end in one write
 SAVE_DELAY = 10
 
@@ -41,6 +57,11 @@ TODAY_KEYS = ("temperature_max_today", "temperature_min_today")
 def storage_key(entry_id: str) -> str:
     """Return the Store key (file name under .storage/) for a config entry."""
     return f"{DOMAIN}.{entry_id}"
+
+
+def station_storage_key(entry_id: str) -> str:
+    """Return the Store key of a config entry's weather station readings."""
+    return f"{DOMAIN}.{entry_id}.station"
 
 
 def serialize(data: dict[str, Any]) -> dict[str, Any]:
@@ -79,8 +100,10 @@ def _restore_forecast(
     """
     Restore the forecast page's data.
 
-    Hours not yet over, days from today on, today's max/min if saved today;
-    alerts and current wind only if fresh.
+    Hours not yet over, days from today on, today's max/min if saved today,
+    alerts and warnings for ALERTS_MAX_AGE. The current wind, precipitation
+    and storm value are kept if fresh, else taken from the current hour's
+    item.
     """
     result: dict[str, Any] = {}
     today = dt_util.as_local(now).date()
@@ -93,28 +116,37 @@ def _restore_forecast(
     if dt_util.as_local(fetched).date() == today:
         result.update({key: data[key] for key in TODAY_KEYS if key in data})
 
-    if now - fetched <= MAX_AGE:
-        for key in (
-            "warning_level",
-            "wind_bearing",
-            "wind_strength",
-            "wind_speed",
-            "wind_gust_speed",
-            "precipitation",
-            "precipitation_probability",
-            "storm_expected",
-        ):
-            if key in data:
-                result[key] = data[key]
+    if now - fetched <= ALERTS_MAX_AGE:
         for key in ("alerts", "warnings"):
             if key in data:
                 result[key] = _valid_alerts(data[key])
+        if "warning_level" in data:
+            result["warning_level"] = data["warning_level"]
+
+    if now - fetched <= MAX_AGE:
+        for key in CURRENT_KEYS:
+            if key in data:
+                result[key] = data[key]
         strength = result.get("wind_strength")
         if strength in WindStrengthMapper.SPEEDS:
             result["wind_speed"] = WindStrengthMapper.SPEEDS[strength]
             result["wind_gust_speed"] = WindStrengthMapper.GUSTS[strength]
+    elif hourly := result.get("hourly_forecast"):
+        # Too old to trust as "current", but the hour now running is still in
+        # the forecast: take them from its item, as a fetch would
+        result.update(current_hour_values(_item_of_hour(hourly, now)))
+        result["storm_expected"] = HourlyForecastParser.storm_expected(hourly, now)
 
     return result
+
+
+def _item_of_hour(items: list[dict], now: datetime) -> dict | None:
+    """Return the hourly item whose hour contains now (None if it is missing)."""
+    for item in items:
+        start = datetime.fromisoformat(item["datetime"])
+        if start <= now < start + timedelta(hours=1):
+            return item
+    return None
 
 
 def _valid_alerts(items: list[Any]) -> list[dict[str, str]]:

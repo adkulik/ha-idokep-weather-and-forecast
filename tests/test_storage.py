@@ -145,13 +145,19 @@ class TestRestoreForecast:
         assert result["temperature_min_today"] == 6
 
     def test_old_same_day_keeps_forecasts_and_todays_values(self) -> None:
-        """Alerts and wind can't be checked by time, so old ones are dropped."""
-        item = saved(FORECAST_DATA, NOW - timedelta(hours=3))
+        """
+        Old alerts and warnings are dropped.
+
+        The current hour's wind and precipitation would come from its item;
+        this one has none, and no storm.
+        """
+        item = saved(FORECAST_DATA, NOW - timedelta(hours=4))
         assert restore(HOURLY, item, NOW) == {
             "hourly_forecast": FORECAST_DATA["hourly_forecast"][1:],
             "daily_forecast": FORECAST_DATA["daily_forecast"][1:],
             "temperature_max_today": 16,
             "temperature_min_today": 6,
+            "storm_expected": False,
         }
 
     def test_next_day_drops_todays_values(self) -> None:
@@ -234,7 +240,7 @@ def test_restore_station_maps_only_if_fresh(source: str, data: dict) -> None:
 
 
 def test_restore_storm_value_only_if_fresh() -> None:
-    """The storm value is kept for an hour, like the current wind."""
+    """The storm value is kept for an hour; without the hourly items it's gone."""
     data = {"storm_expected": True}
     fresh = {"fetched": (NOW - timedelta(minutes=30)).isoformat(), "data": data}
     old = {"fetched": (NOW - timedelta(minutes=90)).isoformat(), "data": data}
@@ -286,22 +292,72 @@ def test_restore_keeps_items_without_a_known_wind_strength() -> None:
     }
 
 
-def test_restore_after_an_hour_recalculates_only_the_hours() -> None:
-    """The current wind isn't restored once old, so it isn't made up either."""
-    saved = _saved_by_an_earlier_version()
-    saved["fetched"] = (NOW - timedelta(minutes=90)).isoformat()
+def test_restore_after_an_hour_takes_the_current_hour_from_its_item() -> None:
+    """
+    Once old, the saved current values are not used.
+
+    They are taken from the forecast's item for the hour now running (20:00 at
+    20:30), as a fetch would.
+    """
+    saved = {
+        "fetched": (NOW - timedelta(minutes=90)).isoformat(),
+        "data": {
+            "wind_strength": "fresh_breeze",
+            "wind_bearing": 90,
+            "precipitation": 2.5,
+            "storm_expected": True,
+            "hourly_forecast": [
+                {
+                    "datetime": "2026-10-29T20:00:00+01:00",
+                    "wind_strength": "gentle_breeze",
+                    "wind_bearing": 180,
+                    "precipitation": 0.2,
+                    "precipitation_probability": 40,
+                },
+                {"datetime": "2026-10-29T21:00:00+01:00", "storm": True},
+            ],
+        },
+    }
 
     result = restore(HOURLY, saved, NOW)
 
+    assert result["wind_strength"] == "gentle_breeze"
+    assert result["wind_bearing"] == 180
+    assert result["wind_speed"] == 12
+    assert result["wind_gust_speed"] == 19
+    assert result["precipitation"] == 0.2
+    assert result["precipitation_probability"] == 40
+    # The next hour is stormy
+    assert result["storm_expected"] is True
+
+
+def test_restore_after_an_hour_without_the_current_hour() -> None:
+    """Without an item for the hour now running there are no current values."""
+    saved = {
+        "fetched": (NOW - timedelta(minutes=90)).isoformat(),
+        "data": {
+            "wind_strength": "fresh_breeze",
+            "hourly_forecast": [
+                {"datetime": "2026-10-29T21:00:00+01:00", "wind_strength": "calm"},
+            ],
+        },
+    }
+
+    result = restore(HOURLY, saved, NOW)
+
+    assert "wind_strength" not in result
     assert "wind_speed" not in result
-    assert "wind_gust_speed" not in result
-    assert result["hourly_forecast"][0]["native_wind_gust_speed"] == 19
+    assert result["storm_expected"] is False
 
 
-def test_restore_warning_level_only_if_fresh() -> None:
-    """The banner's level is kept for an hour, like the alerts."""
-    data = {"warning_level": "yellow"}
-    fresh = {"fetched": (NOW - timedelta(minutes=30)).isoformat(), "data": data}
-    old = {"fetched": (NOW - timedelta(minutes=90)).isoformat(), "data": data}
-    assert restore(HOURLY, fresh, NOW)["warning_level"] == "yellow"
-    assert "warning_level" not in restore(HOURLY, old, NOW)
+def test_restore_alerts_and_warnings_for_three_hours() -> None:
+    """The hourly cards' alerts cover 3 hours; the banners' warnings are kept as long."""
+    data = {
+        "alerts": [{"type": "wind", "level": "yellow"}],
+        "warnings": [{"type": "fog", "level": "yellow"}],
+        "warning_level": "yellow",
+    }
+    fresh = {"fetched": (NOW - timedelta(hours=2, minutes=50)).isoformat(), "data": data}
+    old = {"fetched": (NOW - timedelta(hours=3, minutes=10)).isoformat(), "data": data}
+    assert restore(HOURLY, fresh, NOW) == data
+    assert restore(HOURLY, old, NOW) == {}
