@@ -174,8 +174,10 @@ Az előrejelzési oldalak és az állomástérképek legutóbbi sikeres adatai a
 
 - el nem múlt órák és napok, a mai max/min aznap;
 - a riasztások és figyelmeztetések 3 órán belül;
-- az aktuális szél, csapadék és zivatar egy órán belül, utána az előrejelzés aktuális órájából;
+- az aktuális szél, csapadék és zivatar a letöltés órájában, utána az előrejelzés aktuális órájából;
 - a többi adat egy órán belül.
+
+Ugyanezek a szabályok érvényesek futás közben is, amíg az előrejelzés nem tölthető le: óraváltáskor az aktuális szél, csapadék és zivatar a megtartott előrejelzés következő órájából jön, az elmúlt órák kikerülnek az előrejelzésből, a riasztások és figyelmeztetések pedig 3 óra után eltűnnek. Egy sikeres letöltés ezeket azonnal felülírja.
 
 Az időjárás-állomások legutóbbi mérései a `config/.storage/idokep_weather_and_forecast.<bejegyzés azonosító>.station` fájlba kerülnek, és újraindítás után visszatöltődnek. Ha egy állomás nem érhető el, a szenzorai a legutóbbi méréseit mutatják; a **Mérés maximális kora** beállításnál régebbi mérés itt sem számít.
 

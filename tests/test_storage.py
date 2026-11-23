@@ -18,6 +18,7 @@ from custom_components.idokep_weather_and_forecast.const import (
     UV_MAP,
 )
 from custom_components.idokep_weather_and_forecast.storage import (
+    forecast_as_of,
     restore,
     serialize,
     storage_key,
@@ -329,6 +330,51 @@ def test_restore_after_an_hour_takes_the_current_hour_from_its_item() -> None:
     assert result["precipitation_probability"] == 40
     # The next hour is stormy
     assert result["storm_expected"] is True
+
+
+def test_restore_within_the_hour_of_the_fetch_keeps_the_current_values() -> None:
+    """Fetched at 20:05, restored at 20:55: still the same hour."""
+    data = {
+        "wind_bearing": 90,
+        "precipitation": 2.5,
+        "hourly_forecast": [
+            {"datetime": "2026-10-29T20:00:00+01:00", "wind_bearing": 180},
+        ],
+    }
+    fetched = NOW.replace(minute=5)
+    result = forecast_as_of(data, fetched, NOW.replace(minute=55))
+    assert result["wind_bearing"] == 90
+    assert result["precipitation"] == 2.5
+
+
+def test_restore_in_the_next_hour_moves_the_current_values_on() -> None:
+    """Fetched at 19:55, only 35 minutes ago at 20:30, but for the 19:00 hour."""
+    data = {
+        "wind_bearing": 90,
+        "precipitation": 2.5,
+        "storm_expected": False,
+        "hourly_forecast": [
+            {"datetime": "2026-10-29T19:00:00+01:00", "wind_bearing": 90},
+            {"datetime": "2026-10-29T20:00:00+01:00", "wind_bearing": 180},
+            {"datetime": "2026-10-29T21:00:00+01:00", "storm": True},
+        ],
+    }
+    result = forecast_as_of(data, NOW - timedelta(minutes=35), NOW)
+    assert result["wind_bearing"] == 180
+    assert "precipitation" not in result
+    assert result["storm_expected"] is True
+    assert [h["datetime"][11:16] for h in result["hourly_forecast"]] == [
+        "20:00",
+        "21:00",
+    ]
+
+
+def test_forecast_as_of_is_repeatable() -> None:
+    """Applied again to its own result (as on every update), nothing changes."""
+    item = saved(FORECAST_DATA, NOW - timedelta(minutes=90))
+    once = restore(HOURLY, item, NOW)
+    fetched = datetime.fromisoformat(item["fetched"])
+    assert forecast_as_of(once, fetched, NOW) == once
 
 
 def test_restore_after_an_hour_without_the_current_hour() -> None:

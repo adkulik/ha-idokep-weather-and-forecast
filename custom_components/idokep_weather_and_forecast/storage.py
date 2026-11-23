@@ -8,10 +8,13 @@ only what is still valid:
 - forecasts: hours and days that have not passed yet
 - today's max/min: only if saved today
 - alerts and warnings: only if fetched within ALERTS_MAX_AGE
-- the current wind, precipitation and storm value: if fetched within
-  MAX_AGE, else from the forecast's item for the hour now running
+- the current wind, precipitation and storm value: if fetched in the hour
+  now running, else from the forecast's item for that hour
 - everything else (current conditions, humidity, pressure): only if fetched
   within MAX_AGE, since its age cannot be checked otherwise
+
+The coordinator also applies the forecast rules (forecast_as_of) to the kept
+forecast while the page can't be downloaded, so the current hour moves on.
 """
 
 from __future__ import annotations
@@ -94,16 +97,17 @@ def _restore_current(
     return data if now - fetched <= MAX_AGE else {}
 
 
-def _restore_forecast(
+def forecast_as_of(
     data: dict[str, Any], fetched: datetime, now: datetime
 ) -> dict[str, Any]:
     """
-    Restore the forecast page's data.
+    Return the forecast page's data fetched at fetched as it stands at now.
 
-    Hours not yet over, days from today on, today's max/min if saved today,
-    alerts and warnings for ALERTS_MAX_AGE. The current wind, precipitation
-    and storm value are kept if fresh, else taken from the current hour's
-    item.
+    Used both on restore and while the page can't be downloaded. Hours not
+    yet over, days from today on, today's max/min if fetched today, alerts
+    and warnings for ALERTS_MAX_AGE. The current wind, precipitation and
+    storm value are kept within the hour they were fetched in, after that
+    taken from the item of the hour now running.
     """
     result: dict[str, Any] = {}
     today = dt_util.as_local(now).date()
@@ -123,7 +127,7 @@ def _restore_forecast(
         if "warning_level" in data:
             result["warning_level"] = data["warning_level"]
 
-    if now - fetched <= MAX_AGE:
+    if _hour_start(fetched) == _hour_start(now):
         for key in CURRENT_KEYS:
             if key in data:
                 result[key] = data[key]
@@ -132,12 +136,17 @@ def _restore_forecast(
             result["wind_speed"] = WindStrengthMapper.SPEEDS[strength]
             result["wind_gust_speed"] = WindStrengthMapper.GUSTS[strength]
     elif hourly := result.get("hourly_forecast"):
-        # Too old to trust as "current", but the hour now running is still in
+        # Fetched for an earlier hour, but the hour now running is still in
         # the forecast: take them from its item, as a fetch would
         result.update(current_hour_values(_item_of_hour(hourly, now)))
         result["storm_expected"] = HourlyForecastParser.storm_expected(hourly, now)
 
     return result
+
+
+def _hour_start(moment: datetime) -> datetime:
+    """Return the start of moment's hour (in UTC: Budapest's offset is whole hours)."""
+    return dt_util.as_utc(moment).replace(minute=0, second=0, microsecond=0)
 
 
 def _item_of_hour(items: list[dict], now: datetime) -> dict | None:
@@ -220,5 +229,5 @@ _RESTORERS = {
     HUMIDITY_MAP: _restore_current,
     PRESSURE_MAP: _restore_current,
     UV_MAP: _restore_current,
-    HOURLY: _restore_forecast,
+    HOURLY: forecast_as_of,
 }

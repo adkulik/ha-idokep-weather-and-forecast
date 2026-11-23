@@ -41,9 +41,12 @@ BUDAPEST = zoneinfo.ZoneInfo("Europe/Budapest")
 
 CURRENT_DATA = {"temperature": 15, "condition": "cloudy"}
 HOURLY_DATA = {
-    "hourly_forecast": [{"datetime": "x"}],
+    "hourly_forecast": [
+        {"datetime": "2026-10-29T12:00:00+01:00"},
+        {"datetime": "2026-10-29T13:00:00+01:00"},
+    ],
     "alerts": [],
-    "daily_forecast": [{"datetime": "y"}],
+    "daily_forecast": [{"datetime": "2026-10-29T00:00:00+01:00"}],
 }
 HUMIDITY_DATA = {"humidity": 59.0, "dew_point": 2.0}
 PRESSURE_DATA = {"pressure": 1029.2}
@@ -260,6 +263,67 @@ class TestCoordinatorUpdates:
 
         assert data["temperature"] == CURRENT_DATA["temperature"]
         assert coordinator.schedules[CURRENT].next_due == local(2026, 10, 29, 12, 16)
+
+    @pytest.mark.asyncio
+    async def test_kept_forecast_moves_on_to_the_next_hour(
+        self, coordinator: IdokepDataUpdateCoordinator, client: Mock
+    ) -> None:
+        """
+        When the 13:00 download fails, the current values come from 13:00's item.
+
+        A successful retry then replaces them with the new page's values.
+        """
+        client.async_get_hourly_forecast.return_value = {
+            "hourly_forecast": [
+                {"datetime": "2026-10-29T12:00:00+01:00", "wind_bearing": 90},
+                {"datetime": "2026-10-29T13:00:00+01:00", "wind_bearing": 180},
+                {"datetime": "2026-10-29T14:00:00+01:00", "storm": True},
+            ],
+            "wind_bearing": 90,
+            "storm_expected": False,
+        }
+        await update_at(coordinator, local(2026, 10, 29, 12, 7))
+        client.async_get_hourly_forecast.side_effect = (
+            IdokepApiClientCommunicationError("down")
+        )
+
+        data = await update_at(coordinator, local(2026, 10, 29, 13, 0))
+
+        assert data["wind_bearing"] == 180
+        assert data["storm_expected"] is True
+        assert data["hourly_forecast"][0]["datetime"] == "2026-10-29T13:00:00+01:00"
+
+        client.async_get_hourly_forecast.side_effect = None
+        client.async_get_hourly_forecast.return_value = {
+            "hourly_forecast": [
+                {"datetime": "2026-10-29T13:00:00+01:00", "wind_bearing": 270},
+            ],
+            "wind_bearing": 270,
+            "storm_expected": False,
+        }
+        data = await update_at(coordinator, local(2026, 10, 29, 13, 10))
+
+        assert data["wind_bearing"] == 270
+        assert data["storm_expected"] is False
+
+    @pytest.mark.asyncio
+    async def test_kept_alerts_expire_after_three_hours(
+        self, coordinator: IdokepDataUpdateCoordinator, client: Mock
+    ) -> None:
+        """The alerts of a forecast that can't be downloaded again don't stay."""
+        client.async_get_hourly_forecast.return_value = {
+            **HOURLY_DATA,
+            "alerts": [{"type": "wind", "level": "yellow"}],
+        }
+        await update_at(coordinator, local(2026, 10, 29, 12, 7))
+        client.async_get_hourly_forecast.side_effect = (
+            IdokepApiClientCommunicationError("down")
+        )
+
+        data = await update_at(coordinator, local(2026, 10, 29, 15, 0))
+        assert data["alerts"] == [{"type": "wind", "level": "yellow"}]
+        data = await update_at(coordinator, local(2026, 10, 29, 15, 10))
+        assert "alerts" not in data
 
     @pytest.mark.asyncio
     async def test_page_without_data_is_a_failure(

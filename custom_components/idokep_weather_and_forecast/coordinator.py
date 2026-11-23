@@ -21,7 +21,14 @@ from .const import (
     PRESSURE_MAP,
     UV_MAP,
 )
-from .storage import SAVE_DELAY, STORAGE_VERSION, restore, serialize, storage_key
+from .storage import (
+    SAVE_DELAY,
+    STORAGE_VERSION,
+    forecast_as_of,
+    restore,
+    serialize,
+    storage_key,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -339,6 +346,17 @@ class IdokepDataUpdateCoordinator(DataUpdateCoordinator):
                 schedule.mark_success(now)
                 if self._store is not None:
                     self._store.async_delay_save(self._data_to_save, SAVE_DELAY)
+
+        # A kept forecast moves on with time: the current hour's values from
+        # its item, passed hours and expired alerts dropped
+        if (
+            self._source_data[HOURLY]
+            and HOURLY in self._fetched
+            and self._fetched[HOURLY] != now
+        ):
+            self._source_data[HOURLY] = forecast_as_of(
+                self._source_data[HOURLY], self._fetched[HOURLY], now
+            )
 
         # A page nobody reads anymore must not serve its old values (e.g. the
         # weather entity's humidity); current conditions are kept as the base
