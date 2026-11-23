@@ -173,11 +173,11 @@ A bejegyzés nevét a Home Assistant saját **Átnevezés** funkciójával lehet
 Az előrejelzési oldalak és az állomástérképek legutóbbi sikeres adatai a Home Assistant `config/.storage/idokep_weather_and_forecast.<bejegyzés azonosító>` fájljába kerülnek. Újraindítás után visszatöltődnek:
 
 - el nem múlt órák és napok, a mai max/min aznap;
-- a riasztások 3 órán belül, a figyelmeztetések aznap;
+- a riasztások és figyelmeztetések akármilyen régiek is;
 - az aktuális szél, csapadék és zivatar a letöltés órájában, utána az előrejelzés aktuális órájából;
 - a többi adat (aktuális időjárás, páratartalom, harmatpont, légnyomás, UV-index) akármilyen régi is, amíg egy sikeres letöltés le nem cseréli.
 
-Ugyanezek a szabályok érvényesek futás közben is, amíg az előrejelzés nem tölthető le: óraváltáskor az aktuális szél, csapadék és zivatar a megtartott előrejelzés következő órájából jön, az elmúlt órák kikerülnek az előrejelzésből, a riasztások 3 óra után, a figyelmeztetések éjfélkor eltűnnek. Egy sikeres letöltés ezeket azonnal felülírja.
+Ugyanezek a szabályok érvényesek futás közben is, amíg az előrejelzés nem tölthető le: óraváltáskor az aktuális szél, csapadék és zivatar a megtartott előrejelzés következő órájából jön, az elmúlt órák kikerülnek az előrejelzésből, a riasztások és figyelmeztetések pedig megmaradnak. Egy sikeres letöltés ezeket azonnal felülírja.
 
 Így az entitások akkor is kapnak értéket, ha az idokep.hu épp nem érhető el (például egy áramszünet utáni újraindításkor, amíg az internet még nem működik). A bejegyzés törlésekor a fájl is törlődik.
 

@@ -307,10 +307,10 @@ class TestCoordinatorUpdates:
         assert data["storm_expected"] is False
 
     @pytest.mark.asyncio
-    async def test_kept_alerts_and_warnings_expire(
+    async def test_kept_alerts_stay_while_downloads_fail(
         self, coordinator: IdokepDataUpdateCoordinator, client: Mock
     ) -> None:
-        """While downloads fail, alerts go after 3 hours, warnings at midnight."""
+        """Alerts and warnings stay until a download succeeds, however long that takes."""
         client.async_get_hourly_forecast.return_value = {
             **HOURLY_DATA,
             "alerts": [{"type": "wind", "level": "yellow"}],
@@ -322,15 +322,10 @@ class TestCoordinatorUpdates:
             IdokepApiClientCommunicationError("down")
         )
 
-        data = await update_at(coordinator, local(2026, 10, 29, 15, 0))
+        data = await update_at(coordinator, local(2026, 10, 30, 9, 10))
         assert data["alerts"] == [{"type": "wind", "level": "yellow"}]
-        data = await update_at(coordinator, local(2026, 10, 29, 15, 10))
-        assert "alerts" not in data
+        assert data["warnings"] == [{"type": "fog", "level": "yellow"}]
         assert data["warning_level"] == "yellow"
-
-        data = await update_at(coordinator, local(2026, 10, 30, 0, 0))
-        assert "warnings" not in data
-        assert "warning_level" not in data
 
     @pytest.mark.asyncio
     async def test_page_without_data_is_a_failure(
@@ -738,10 +733,10 @@ async def test_restore_ignores_unknown_and_expired_pages(
                 "fetched": local(2026, 10, 30, 12, 45).isoformat(),
                 "data": {},
             },
-            # Saved the day before: its hours and days are all over
+            # Saved the day before: its hours and days are all over (no alerts)
             HOURLY: {
                 "fetched": local(2026, 10, 29, 12, 45).isoformat(),
-                "data": HOURLY_DATA,
+                "data": {k: v for k, v in HOURLY_DATA.items() if k != "alerts"},
             },
             # Current conditions are kept however old
             CURRENT: {

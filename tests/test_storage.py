@@ -143,7 +143,7 @@ class TestRestoreForecast:
 
     def test_old_same_day_keeps_forecasts_and_todays_values(self) -> None:
         """
-        Today's warnings are kept; alerts over 3 hours old are dropped.
+        Alerts and warnings are kept however old.
 
         The current hour's wind and precipitation would come from its item;
         this one has none, and no storm.
@@ -154,6 +154,7 @@ class TestRestoreForecast:
             "daily_forecast": FORECAST_DATA["daily_forecast"][1:],
             "temperature_max_today": 16,
             "temperature_min_today": 6,
+            "alerts": FORECAST_DATA["alerts"],
             "warnings": FORECAST_DATA["warnings"],
             "warning_level": "orange",
             "storm_expected": False,
@@ -164,13 +165,20 @@ class TestRestoreForecast:
         item = saved(FORECAST_DATA, NOW - timedelta(hours=3))
         tomorrow = NOW + timedelta(hours=5)  # 01:30 on the 30th
         assert restore(HOURLY, item, tomorrow) == {
-            "daily_forecast": FORECAST_DATA["daily_forecast"][2:]
+            "daily_forecast": FORECAST_DATA["daily_forecast"][2:],
+            "alerts": FORECAST_DATA["alerts"],
+            "warnings": FORECAST_DATA["warnings"],
+            "warning_level": "orange",
         }
 
-    def test_all_past_restores_nothing(self) -> None:
-        """A forecast that is completely over is not restored."""
+    def test_all_past_keeps_only_the_alerts(self) -> None:
+        """Of a forecast that is completely over, only the alerts and warnings stay."""
         item = saved(FORECAST_DATA, NOW - timedelta(days=2))
-        assert restore(HOURLY, item, NOW + timedelta(days=2)) == {}
+        assert restore(HOURLY, item, NOW + timedelta(days=2)) == {
+            "alerts": FORECAST_DATA["alerts"],
+            "warnings": FORECAST_DATA["warnings"],
+            "warning_level": "orange",
+        }
 
     def test_invalid_daily_dates_dropped(self) -> None:
         """Daily entries without a real date are not restored."""
@@ -394,27 +402,12 @@ def test_restore_after_an_hour_without_the_current_hour() -> None:
     assert result["storm_expected"] is False
 
 
-ALERT_DATA = {
-    "alerts": [{"type": "wind", "level": "yellow"}],
-    "warnings": [{"type": "fog", "level": "yellow"}],
-    "warning_level": "yellow",
-}
-
-
-def test_restore_alerts_for_three_hours() -> None:
-    """The hourly cards' alerts cover the current and the next two hours."""
-    fresh = saved(ALERT_DATA, NOW - timedelta(hours=2, minutes=50))
-    old = saved(ALERT_DATA, NOW - timedelta(hours=3, minutes=10))
-    assert restore(HOURLY, fresh, NOW)["alerts"] == ALERT_DATA["alerts"]
-    assert "alerts" not in restore(HOURLY, old, NOW)
-
-
-def test_restore_warnings_on_the_same_day() -> None:
-    """The banners' warnings are for the day: kept until midnight, however old."""
-    morning = saved(ALERT_DATA, NOW.replace(hour=0, minute=5))  # 20 hours earlier
-    yesterday = saved(ALERT_DATA, NOW.replace(hour=0, minute=0) - timedelta(minutes=5))
-    assert restore(HOURLY, morning, NOW) == {
-        "warnings": ALERT_DATA["warnings"],
+def test_restore_alerts_and_warnings_however_old() -> None:
+    """Alerts and warnings stay until the next successful fetch replaces them."""
+    data = {
+        "alerts": [{"type": "wind", "level": "yellow"}],
+        "warnings": [{"type": "fog", "level": "yellow"}],
         "warning_level": "yellow",
     }
-    assert restore(HOURLY, yesterday, NOW) == {}
+    old = {"fetched": (NOW - timedelta(days=2)).isoformat(), "data": data}
+    assert restore(HOURLY, old, NOW) == data

@@ -6,8 +6,7 @@ Assistant's Store helper). After a restart the saved data is restored:
 
 - forecasts: hours and days that have not passed yet
 - today's max/min: only if saved today
-- alerts: only if fetched within ALERTS_MAX_AGE (they cover the next hours)
-- warnings: only if fetched today (they are for the day)
+- alerts and warnings: however old, until a successful fetch replaces them
 - the current wind, precipitation and storm value: if fetched in the hour
   now running, else from the forecast's item for that hour
 - everything else (current conditions, humidity, pressure, UV): however
@@ -44,8 +43,6 @@ from .const import (
 )
 
 STORAGE_VERSION = 1
-# The hourly cards' alerts are for the current and the next two hours
-ALERTS_MAX_AGE = timedelta(hours=3)
 # The forecast page's values for the hour now running
 CURRENT_KEYS = (*(key for _, key in CURRENT_HOUR_KEYS), "storm_expected")
 # Delay before writing, so several page fetches end in one write
@@ -102,8 +99,8 @@ def forecast_as_of(
     Return the forecast page's data fetched at fetched as it stands at now.
 
     Used both on restore and while the page can't be downloaded. Hours not
-    yet over, days from today on, today's max/min and warnings if fetched
-    today, alerts for ALERTS_MAX_AGE. The current wind, precipitation and
+    yet over, days from today on, today's max/min if fetched today, alerts
+    and warnings however old. The current wind, precipitation and
     storm value are kept within the hour they were fetched in, after that
     taken from the item of the hour now running.
     """
@@ -115,14 +112,13 @@ def forecast_as_of(
     if daily := _days_from(data.get("daily_forecast", []), today):
         result["daily_forecast"] = daily
 
-    if now - fetched <= ALERTS_MAX_AGE and "alerts" in data:
-        result["alerts"] = _valid_alerts(data["alerts"])
+    for key in ("alerts", "warnings"):
+        if key in data:
+            result[key] = _valid_alerts(data[key])
+    if "warning_level" in data:
+        result["warning_level"] = data["warning_level"]
     if dt_util.as_local(fetched).date() == today:
         result.update({key: data[key] for key in TODAY_KEYS if key in data})
-        if "warnings" in data:
-            result["warnings"] = _valid_alerts(data["warnings"])
-        if "warning_level" in data:
-            result["warning_level"] = data["warning_level"]
 
     if _hour_start(fetched) == _hour_start(now):
         for key in CURRENT_KEYS:

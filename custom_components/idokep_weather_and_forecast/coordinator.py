@@ -348,7 +348,7 @@ class IdokepDataUpdateCoordinator(DataUpdateCoordinator):
                     self._store.async_delay_save(self._data_to_save, SAVE_DELAY)
 
         # A kept forecast moves on with time: the current hour's values from
-        # its item, passed hours and expired alerts dropped
+        # its item, passed hours dropped
         if (
             self._source_data[HOURLY]
             and HOURLY in self._fetched
