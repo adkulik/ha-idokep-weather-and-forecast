@@ -913,8 +913,8 @@ async def test_apparent_temperature_is_recalculated_at_every_update(
     """Each update uses the pages' latest values, even if only one page changed."""
     client.async_get_hourly_forecast.return_value = {
         **HOURLY_DATA,
-        "wind_speed": 14,
-        "wind_gust_speed": 22,  # their mean is 18 km/h
+        "wind_speed": 18,
+        "wind_gust_speed": 31.5,  # not used
     }
     client.async_get_current_weather.return_value = {"temperature": 20}
     client.async_get_humidity_map.return_value = {"humidity": 50.0, "dew_point": 9.0}
@@ -977,15 +977,17 @@ async def test_apparent_temperature_sensor_keeps_its_pages_going(
 
 
 @pytest.mark.asyncio
-async def test_no_apparent_temperature_without_the_gust(
+async def test_apparent_temperature_uses_the_wind_speed_only(
     coordinator: IdokepDataUpdateCoordinator, client: Mock
 ) -> None:
-    """Both wind values are needed for their mean."""
-    client.async_get_hourly_forecast.return_value = {**HOURLY_DATA, "wind_speed": 20}
+    """The gust plays no part, and its absence doesn't matter."""
+    client.async_get_current_weather.return_value = {"temperature": 20}
+    client.async_get_humidity_map.return_value = {"humidity": 50.0, "dew_point": 9.0}
+    client.async_get_hourly_forecast.return_value = {**HOURLY_DATA, "wind_speed": 18}
 
     data = await update_at(coordinator, local(2026, 10, 29, 12, 7))
 
-    assert "apparent_temperature" not in data
+    assert data["apparent_temperature"] == 16.35
 
 
 @pytest.mark.asyncio
@@ -1022,7 +1024,7 @@ async def test_upgrade_mid_hour_has_gust_and_apparent_temperature(
         await coordinator.async_restore()
 
     assert coordinator._source_data[HOURLY]["wind_speed"] == 12
-    assert coordinator._source_data[HOURLY]["wind_gust_speed"] == 19
+    assert coordinator._source_data[HOURLY]["wind_gust_speed"] == 21
     kept = client._hourly_parser._last_forecast[0]
     assert kept["native_wind_speed"] == 12
-    assert kept["native_wind_gust_speed"] == 19
+    assert kept["native_wind_gust_speed"] == 21

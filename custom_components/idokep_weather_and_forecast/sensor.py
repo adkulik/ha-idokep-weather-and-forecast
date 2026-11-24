@@ -179,7 +179,7 @@ ENTITY_DESCRIPTIONS = (
         device_class=SensorDeviceClass.WIND_SPEED,
     ),
     # The current hour's amount: its share of the day's total (by rain bar)
-    # Estimated: the upper end of the wind strength's Beaufort range
+    # Estimated: 1.75 times the wind speed
     SensorEntityDescription(
         key="wind_gust_speed",
         translation_key="wind_gust_speed",

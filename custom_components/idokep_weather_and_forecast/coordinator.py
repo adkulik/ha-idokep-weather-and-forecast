@@ -368,10 +368,10 @@ class IdokepDataUpdateCoordinator(DataUpdateCoordinator):
         for source in self.schedules:
             data.update(self._source_data[source])
         # Recalculated at every update, from the pages' latest values
-        speed, gust = data.get("wind_speed"), data.get("wind_gust_speed")
-        if speed is not None and gust is not None:
+        speed = data.get("wind_speed")
+        if speed is not None:
             feels_like = apparent_temperature(
-                data.get("temperature"), data.get("humidity"), (speed + gust) / 2
+                data.get("temperature"), data.get("humidity"), speed
             )
             if feels_like is not None:
                 data["apparent_temperature"] = feels_like

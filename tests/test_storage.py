@@ -40,7 +40,7 @@ FORECAST_DATA = {
     "wind_bearing": 12,
     "wind_strength": "moderate_breeze",
     "wind_speed": 20,
-    "wind_gust_speed": 28,
+    "wind_gust_speed": 35,
     "precipitation": 0.81,
     "precipitation_probability": 25,
     "alerts": [{"type": "wind", "level": "yellow"}],
@@ -132,7 +132,7 @@ class TestRestoreForecast:
         assert result["wind_bearing"] == 12
         assert result["wind_strength"] == "moderate_breeze"
         assert result["wind_speed"] == 20
-        assert result["wind_gust_speed"] == 28
+        assert result["wind_gust_speed"] == 35
         assert result["precipitation"] == 0.81
         assert result["precipitation_probability"] == 25
         assert result["alerts"] == FORECAST_DATA["alerts"]
@@ -279,9 +279,9 @@ def test_restore_recalculates_the_wind_estimates() -> None:
     result = restore(HOURLY, _saved_by_an_earlier_version(), NOW)
 
     assert result["wind_speed"] == 12
-    assert result["wind_gust_speed"] == 19
+    assert result["wind_gust_speed"] == 21
     assert result["hourly_forecast"][0]["native_wind_speed"] == 12
-    assert result["hourly_forecast"][0]["native_wind_gust_speed"] == 19
+    assert result["hourly_forecast"][0]["native_wind_gust_speed"] == 21
 
 
 def test_restore_keeps_items_without_a_known_wind_strength() -> None:
@@ -331,7 +331,7 @@ def test_restore_after_an_hour_takes_the_current_hour_from_its_item() -> None:
     assert result["wind_strength"] == "gentle_breeze"
     assert result["wind_bearing"] == 180
     assert result["wind_speed"] == 12
-    assert result["wind_gust_speed"] == 19
+    assert result["wind_gust_speed"] == 21
     assert result["precipitation"] == 0.2
     assert result["precipitation_probability"] == 40
     # The next hour is stormy

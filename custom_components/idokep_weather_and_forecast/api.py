@@ -178,14 +178,17 @@ STORM_TEXTS = frozenset(
 )
 
 
+GUST_FACTOR = 1.75
+
+
 class WindStrengthMapper:
     """
     Maps idokep.hu wind strength words to Beaufort-scale levels.
 
     idokep.hu gives no wind speed, only a strength word ("Mérsékelt északi
     szél", class "mersekelt"). The estimated wind speed of a level is the lower
-    end of its Beaufort range in km/h, the estimated gust is the upper end
-    (hurricane has no upper end, so both are its lower limit). Only "gyenge",
+    end of its Beaufort range in km/h, the estimated gust is that speed times
+    1.75. Only "gyenge",
     "mersekelt" and "elenk" have been seen on the site so far; the other words
     follow the Hungarian Beaufort names.
     """
@@ -206,21 +209,9 @@ class WindStrengthMapper:
         "violent_storm": 103,
         "hurricane": 118,
     }
-    # Level code: upper end of its range in km/h
-    GUSTS: ClassVar[dict[str, int]] = {
-        "calm": 1,
-        "light_air": 5,
-        "light_breeze": 11,
-        "gentle_breeze": 19,
-        "moderate_breeze": 28,
-        "fresh_breeze": 38,
-        "strong_breeze": 49,
-        "near_gale": 61,
-        "gale": 74,
-        "strong_gale": 88,
-        "storm": 102,
-        "violent_storm": 117,
-        "hurricane": 118,
+    # Level code: estimated gust in km/h, GUST_FACTOR times the wind speed
+    GUSTS: ClassVar[dict[str, float]] = {
+        level: round(speed * GUST_FACTOR, 2) for level, speed in SPEEDS.items()
     }
 
     # Accent-free, space-free Hungarian words: level code. The official

@@ -1102,14 +1102,14 @@ class TestHourlyParserBranches:
             result = parser.parse(BeautifulSoup(html, "html.parser"))
 
         bearings = [item["wind_bearing"] for item in result["hourly_forecast"]]
-        # Both cards say "mersekelt": moderate breeze, 20-28 km/h
+        # Both cards say "mersekelt": moderate breeze, 20 km/h, gust 35
         assert result["wind_strength"] == "moderate_breeze"
         assert result["wind_speed"] == 20
-        assert result["wind_gust_speed"] == 28
+        assert result["wind_gust_speed"] == 35
         for item in result["hourly_forecast"]:
             assert item["wind_strength"] == "moderate_breeze"
             assert item["native_wind_speed"] == 20
-            assert item["native_wind_gust_speed"] == 28
+            assert item["native_wind_gust_speed"] == 35
         assert bearings == [6, 200]
         assert result["wind_bearing"] == 6
 
@@ -2254,8 +2254,8 @@ def test_alerts_of_the_first_3_cards_count(alert_hour: int, counted: bool) -> No
     assert result["alerts"] == ([{"type": "wind", "level": "red"}] if counted else [])
 
 
-def test_wind_speed_and_gust_are_the_ends_of_each_level() -> None:
-    """Speed: the Beaufort range's lower end; gust: its upper end."""
+def test_wind_speed_and_gust_of_each_level() -> None:
+    """Speed: the Beaufort range's lower end; gust: that speed times 1.75."""
     assert WindStrengthMapper.SPEEDS == {
         "calm": 0,
         "light_air": 1,
@@ -2272,20 +2272,9 @@ def test_wind_speed_and_gust_are_the_ends_of_each_level() -> None:
         "hurricane": 118,
     }
     assert WindStrengthMapper.GUSTS == {
-        "calm": 1,
-        "light_air": 5,
-        "light_breeze": 11,
-        "gentle_breeze": 19,
-        "moderate_breeze": 28,
-        "fresh_breeze": 38,
-        "strong_breeze": 49,
-        "near_gale": 61,
-        "gale": 74,
-        "strong_gale": 88,
-        "storm": 102,
-        "violent_storm": 117,
-        "hurricane": 118,  # the scale has no upper end
+        level: speed * 1.75 for level, speed in WindStrengthMapper.SPEEDS.items()
     }
+    assert WindStrengthMapper.GUSTS["moderate_breeze"] == 35.0
 
 
 # ---- night hours ------------------------------------------------------------------
