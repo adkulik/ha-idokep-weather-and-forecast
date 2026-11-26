@@ -378,6 +378,22 @@ async def test_unreadable_frame_is_a_failure(
 
 
 @pytest.mark.asyncio
+async def test_unexpected_error_is_logged_with_its_traceback(
+    coordinator: RadarCoordinator,
+    site: FakeSite,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A bug leaves no animation and is logged once, with its traceback."""
+    with patch.object(coordinator, "_update_frames", side_effect=KeyError("bug")):
+        assert await update_at(coordinator, T0) is None
+        assert await update_at(coordinator, T0) is None
+
+    [record] = caplog.records
+    assert record.getMessage() == "Időkép radar download failed: KeyError('bug')"
+    assert record.exc_info
+
+
+@pytest.mark.asyncio
 async def test_failure_and_recovery_are_each_logged_once(
     coordinator: RadarCoordinator,
     site: FakeSite,
@@ -389,8 +405,8 @@ async def test_failure_and_recovery_are_each_logged_once(
         await update_at(coordinator, T0)
 
     assert [(r.levelname, r.getMessage()) for r in caplog.records] == [
-        ("WARNING", "Radar update failed: down"),
-        ("WARNING", "Radar update works again"),
+        ("WARNING", "Időkép radar download failed: down"),
+        ("WARNING", "Időkép radar download works again"),
     ]
 
 

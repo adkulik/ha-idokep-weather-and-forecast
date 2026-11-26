@@ -1,4 +1,4 @@
-"""Log a failing download once, and its recovery once."""
+"""Log a problem once, and the recovery of a failing download once."""
 
 from __future__ import annotations
 
@@ -6,6 +6,16 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from logging import Logger
+
+# The warnings logged by warn_once, as (message, *arguments)
+_WARNED: set[tuple[object, ...]] = set()
+
+
+def warn_once(logger: Logger, message: str, *args: object) -> None:
+    """Log a warning the first time it comes up with these arguments."""
+    if (message, *args) not in _WARNED:
+        _WARNED.add((message, *args))
+        logger.warning(message, *args)
 
 
 class FailureLog:
@@ -22,11 +32,19 @@ class FailureLog:
         self._failing = False
 
     def failed(self, reason: object, exc_info: BaseException | None = None) -> None:
-        """Log the reason, unless the download was failing already."""
+        """
+        Log the reason, unless the download was failing already.
+
+        exc_info: an unexpected error, logged with its traceback.
+        """
         if not self._failing:
             self._failing = True
             self._logger.warning(
-                "%s failed: %s", self._name, reason, exc_info=exc_info
+                "%s failed: %s",
+                self._name,
+                # A timeout, for one, has no message
+                str(reason) or type(reason).__name__,
+                exc_info=exc_info,
             )
 
     def succeeded(self) -> None:

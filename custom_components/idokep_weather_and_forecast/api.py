@@ -21,6 +21,7 @@ except ImportError:
     zoneinfo = None
 
 from .const import LOGGER
+from .failures import warn_once
 
 
 # Configuration and constants
@@ -158,8 +159,17 @@ class WeatherConditionMapper:
 
     @classmethod
     def map_condition(cls, condition: str) -> str:
-        """Map Hungarian condition to Home Assistant standard condition."""
-        return cls._CONDITION_MAPPING.get(condition.lower(), "unknown")
+        """
+        Map Hungarian condition to Home Assistant standard condition.
+
+        "unknown" for a description it does not recognise, which is
+        warned about once.
+        """
+        mapped = cls._CONDITION_MAPPING.get(condition.lower())
+        if mapped is None:
+            warn_once(LOGGER, "Unknown idokep.hu weather %r", condition)
+            return "unknown"
+        return mapped
 
     @classmethod
     def conditions(cls) -> list[str]:
@@ -792,7 +802,11 @@ class HourlyForecastParser(WeatherParser):
             level = WindStrengthMapper.from_text(tooltip)
             if level is not None:
                 return level
-        LOGGER.debug("Unknown wind strength: classes %s, tooltip %r", classes, tooltip)
+        warn_once(
+            LOGGER,
+            "Unknown idokep.hu wind strength %r",
+            tooltip if isinstance(tooltip, str) else " ".join(classes),
+        )
         return None
 
     @staticmethod

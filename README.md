@@ -172,6 +172,8 @@ A bejegyzés nevét a Home Assistant saját **Átnevezés** funkciójával lehet
 - A sikertelen letöltés entitásai „nem elérhető” állapotúak, a korábbi adatot nem mutatják; az előrejelzés a fenti kivétel.
 - Az ütemezett letöltés akkor is megtörténik, ha korábban jön, mint az újrapróbálás (az előrejelzésé teljes órakor).
 - A naplóba forrásonként (oldal, állomás, radar) egy figyelmeztetés kerül, amikor a letöltés először nem sikerül, és egy, amikor újra sikerül; a közbenső hibák nem.
+- Váratlan hibánál a figyelmeztetés a hiba részleteit (traceback) is tartalmazza.
+- Az ismeretlen időjárás-leírásról és szélerősségről értékenként egy figyelmeztetés kerül a naplóba.
 - Csak az az oldal töltődik le, amelyet legalább egy bekapcsolt entitás használ; a többi újraindításkor sem. A térképoldalakhoz a saját szenzoraik tartoznak: ha egy oldal minden szenzorát kikapcsolod, az oldal letöltése leáll, és az időjárás entitás megfelelő attribútumai is eltűnnek. Az előrejelzési oldalt az időjárás entitás is használja, így az csak akkor áll le, ha az is ki van kapcsolva.
 - Ha a bejegyzés rendszerbeállításaiban kikapcsolod a lekérdezést (**Enable polling for updates**), az ütemezett frissítés leáll.
 

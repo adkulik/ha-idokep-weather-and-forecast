@@ -472,8 +472,11 @@ class TestCoordinatorUpdates:
             await update_at(coordinator, local(2026, 10, 29, 12, minute))
 
         assert [(r.levelno, r.getMessage()) for r in caplog.records] == [
-            (WARNING, "Fetching current data for Budapest failed: down"),
-            (WARNING, "Fetching current data for Budapest works again"),
+            (
+                WARNING,
+                "Időkép current weather download for Budapest failed: down",
+            ),
+            (WARNING, "Időkép current weather download for Budapest works again"),
         ]
 
     @pytest.mark.asyncio
@@ -749,6 +752,23 @@ class TestSavedData:
         client.restore_hourly_forecast.assert_called_once_with(items)
         assert coordinator._last_forecast["hourly_forecast"] == items
         client.restore_today_forecast.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unreadable_saved_forecast_is_warned_about(
+        self,
+        coordinator: IdokepDataUpdateCoordinator,
+        fake_store: type[FakeStore],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A saved file without a readable forecast is ignored, with a warning."""
+        coordinator.config_entry.entry_id = "entry1"
+        fake_store.files["idokep_weather_and_forecast.entry1"] = {"sources": 1}
+        await restore_at(coordinator, local(2026, 10, 30, 12, 51))
+
+        [record] = caplog.records
+        assert record.getMessage() == (
+            "Ignoring the saved forecast, which is unreadable: it has no forecast"
+        )
 
     @pytest.mark.asyncio
     async def test_restore_skips_data_of_another_location(

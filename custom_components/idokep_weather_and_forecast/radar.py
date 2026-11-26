@@ -170,7 +170,7 @@ class RadarCoordinator(DataUpdateCoordinator[RadarImage | None]):
             config_entry=config_entry,
         )
         self._session = session
-        self._failures = FailureLog(logger, "Radar update")
+        self._failures = FailureLog(logger, "Időkép radar download")
         # Frames oldest first; the newest frame's Last-Modified value
         self._frames: deque[bytes] = deque(maxlen=FRAME_COUNT)
         self._last_modified: str | None = None
@@ -211,9 +211,14 @@ class RadarCoordinator(DataUpdateCoordinator[RadarImage | None]):
                     build_gif, list(self._frames)
                 )
                 image = RadarImage(gif=gif, updated=self._newest_time())
-        # OSError and ValueError: a frame that isn't a readable picture
-        except (IdokepApiClientCommunicationError, OSError, ValueError) as exception:
-            self._failures.failed(exception)
+        except Exception as exception:  # pylint: disable=broad-exception-caught
+            # OSError and ValueError: a frame that isn't a readable picture
+            expected = (IdokepApiClientCommunicationError, OSError, ValueError)
+            if isinstance(exception, expected):
+                self._failures.failed(exception)
+            else:
+                # With the traceback
+                self._failures.failed(repr(exception), exc_info=exception)
             self._frames.clear()
             self._last_modified = None
             self._got_frame_this_slot = False

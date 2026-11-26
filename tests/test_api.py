@@ -14,6 +14,7 @@ import aiohttp
 import pytest
 from bs4 import BeautifulSoup, Tag
 
+from custom_components.idokep_weather_and_forecast import failures
 from custom_components.idokep_weather_and_forecast.api import (
     _BROWSER_HEADERS,
     AlertParser,
@@ -186,6 +187,20 @@ class TestIdokepApiClient:
         """Test condition mapping for unknown conditions."""
         assert WeatherConditionMapper.map_condition("ismeretlen időjárás") == "unknown"
         assert WeatherConditionMapper.map_condition("") == "unknown"
+
+    def test_unknown_description_is_warned_about_once(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Each unrecognised description is warned about only once."""
+        failures._WARNED.clear()
+
+        for text in ("Furcsa idő", "Furcsa idő", "napos", "más"):
+            WeatherConditionMapper.map_condition(text)
+
+        assert [(r.levelname, r.getMessage()) for r in caplog.records] == [
+            ("WARNING", "Unknown idokep.hu weather 'Furcsa idő'"),
+            ("WARNING", "Unknown idokep.hu weather 'más'"),
+        ]
 
 
 class TestIdokepApiClientWeatherScraping:

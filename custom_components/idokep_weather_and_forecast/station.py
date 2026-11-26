@@ -383,7 +383,7 @@ class StationCoordinator(DataUpdateCoordinator[StationData]):
         self.method = method
         self.max_age = max_age
         self._failures = {
-            code: FailureLog(logger, f"Reading weather station {code}")
+            code: FailureLog(logger, f"Időkép station {code} download")
             for code in codes
         }
         # True while a station failed: it is retried every minute

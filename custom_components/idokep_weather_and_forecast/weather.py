@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.weather import (
@@ -21,7 +20,13 @@ from homeassistant.const import (
 from homeassistant.core import callback
 from homeassistant.helpers import sun
 
-from .const import ATTRIBUTION, DOMAIN, FORECAST_DEVICE, MANUFACTURER
+from .const import (
+    ATTRIBUTION,
+    DOMAIN,
+    FORECAST_DEVICE,
+    LOGGER,
+    MANUFACTURER,
+)
 from .coordinator import CURRENT, HOURLY
 from .entity import IdokepEntity, device_name_fields, forecast_page_url
 
@@ -31,8 +36,6 @@ if TYPE_CHECKING:
 
     from .coordinator import IdokepDataUpdateCoordinator
     from .data import IdokepConfigEntry
-
-_LOGGER = logging.getLogger(__name__)
 
 # Hourly forecast fields only used inside the integration: for the storm sensor
 # and for the Wind strength sensor
@@ -76,7 +79,7 @@ class IdokepWeatherEntity(IdokepEntity, WeatherEntity):  # pylint: disable=too-m
         self._attr_supported_features = (
             WeatherEntityFeature.FORECAST_DAILY | WeatherEntityFeature.FORECAST_HOURLY
         )
-        _LOGGER.debug(
+        LOGGER.debug(
             "Initialized weather entity with unique_id: %s", self._attr_unique_id
         )
 

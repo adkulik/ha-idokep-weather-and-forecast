@@ -108,6 +108,16 @@ def floor_to_minute(now: datetime) -> datetime:
     return now.replace(second=0, microsecond=0)
 
 
+# What the log calls each source
+SOURCE_NAMES = {
+    CURRENT: "current weather",
+    HOURLY: "forecast",
+    HUMIDITY_MAP: "humidity map",
+    PRESSURE_MAP: "pressure map",
+    UV_MAP: "UV map",
+}
+
+
 @dataclass
 class SourceSchedule:
     """When a data source is fetched next."""
@@ -198,7 +208,9 @@ class IdokepDataUpdateCoordinator(DataUpdateCoordinator):
         }
         location = config_entry.data["location"]
         self._failures = {
-            source: FailureLog(logger, f"Fetching {source} data for {location}")
+            source: FailureLog(
+                logger, f"Időkép {SOURCE_NAMES[source]} download for {location}"
+            )
             for source in self.schedules
         }
         # The last downloaded forecast, saved under .storage/ (set up by
@@ -226,6 +238,11 @@ class IdokepDataUpdateCoordinator(DataUpdateCoordinator):
             return
 
         self._last_forecast = restored_forecast(saved)
+        if saved and not any(self._last_forecast.values()):
+            self.logger.warning(
+                "Ignoring the saved forecast, which is unreadable: %s",
+                "it has no forecast",
+            )
         client = self.config_entry.runtime_data.client
         today = dt_util.as_local(dt_util.utcnow()).date()
         if item := today_item(self._last_forecast, today):
@@ -366,7 +383,7 @@ class IdokepDataUpdateCoordinator(DataUpdateCoordinator):
             # Unexpected, e.g. a parser error: with the traceback
             failures.failed(repr(result), exc_info=result)
         elif REQUIRED_KEYS[source] not in result:
-            failures.failed(f"no {source} data on the page")
+            failures.failed(f"no {SOURCE_NAMES[source]} data on the page")
         else:
             succeeded = True
 

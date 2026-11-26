@@ -399,7 +399,7 @@ def _fetching(coordinator: StationCoordinator, files: dict[str, object]) -> obje
     coordinator.method = "priority"
     coordinator.max_age = 60
     coordinator._failures = {
-        code: FailureLog(getLogger(__name__), f"Reading weather station {code}")
+        code: FailureLog(getLogger(__name__), f"Időkép station {code} download")
         for code in files
     }
 
@@ -835,6 +835,6 @@ async def test_failed_station_has_no_values_and_is_logged_once(
     assert values == [{"hom": 7.5}, {}, {}, {"hom": 7.5}, {"hom": 7.5}]
     assert coordinator.retrying is False
     assert [r.getMessage() for r in caplog.records] == [
-        "Reading weather station jozsamet failed: down",
-        "Reading weather station jozsamet works again",
+        "Időkép station jozsamet download failed: down",
+        "Időkép station jozsamet download works again",
     ]
