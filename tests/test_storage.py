@@ -1,58 +1,43 @@
-"""Tests for saving page data to disk and restoring what is still valid."""
+"""Tests for saving the forecast to disk and reading back the parts needed."""
 
 from __future__ import annotations
 
 import json
 import zoneinfo
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
 from homeassistant.util import dt as dt_util
 
-from custom_components.idokep_weather_and_forecast.const import (
-    CURRENT,
-    HOURLY,
-    HUMIDITY_MAP,
-    PRESSURE_MAP,
-    UV_MAP,
-)
+from custom_components.idokep_weather_and_forecast.const import HOURLY
 from custom_components.idokep_weather_and_forecast.storage import (
     forecast_as_of,
-    restore,
+    restored_forecast,
     serialize,
     storage_key,
+    today_item,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
 BUDAPEST = zoneinfo.ZoneInfo("Europe/Budapest")
-NOW = datetime(2026, 10, 29, 20, 30, tzinfo=BUDAPEST)
+TODAY = date(2026, 10, 29)
 
-CURRENT_DATA = {"temperature": 13, "condition": "cloudy"}
 FORECAST_DATA = {
     "hourly_forecast": [
-        {"datetime": "2026-10-29T19:00:00+01:00", "temperature": 10},
         {"datetime": "2026-10-29T20:00:00+01:00", "temperature": 9},
         {"datetime": "2026-10-29T21:00:00+01:00", "temperature": 8},
     ],
-    "wind_bearing": 12,
-    "wind_strength": "moderate_breeze",
     "wind_speed": 20,
-    "wind_gust_speed": 35,
     "precipitation": 0.81,
-    "precipitation_probability": 25,
     "alerts": [{"type": "wind", "level": "yellow"}],
-    "warnings": [{"type": "thunderstorm", "level": "orange"}],
-    "warning_level": "orange",
     "daily_forecast": [
-        {"datetime": "2026-10-28T00:00:00+01:00", "temperature": 15},
         {"datetime": "2026-10-29T00:00:00+01:00", "temperature": 16},
         {"datetime": "2026-10-30T00:00:00+01:00", "temperature": 14},
     ],
     "temperature_max_today": 16,
-    "temperature_min_today": 6,
 }
 
 
@@ -65,11 +50,9 @@ def budapest_time_zone() -> Iterator[None]:
     dt_util.set_default_time_zone(original)
 
 
-def saved(data: dict, fetched: datetime) -> dict:
-    """Return page data as it is written to disk (through JSON)."""
-    return json.loads(
-        json.dumps({"fetched": fetched.isoformat(), "data": serialize(data)})
-    )
+def saved(data: dict) -> dict:
+    """Return a downloaded page as it is written to disk (through JSON)."""
+    return json.loads(json.dumps(serialize("Budapest", data)))
 
 
 def test_storage_key() -> None:
@@ -77,337 +60,148 @@ def test_storage_key() -> None:
     assert storage_key("abc123") == "idokep_weather_and_forecast.abc123"
 
 
-def test_serialize_returns_a_json_safe_copy() -> None:
-    """The page data is plain data; serialize copies it."""
-    data = serialize(FORECAST_DATA)
-    assert data == FORECAST_DATA
-    assert data is not FORECAST_DATA
-    json.dumps(data)  # must not raise
-
-
-def test_restore_keeps_only_valid_alerts() -> None:
-    """Saved alerts come back as {"type", "level"}; unknown types are dropped."""
-    data = {
-        "alerts": [
-            # As saved by 1.12.0 and earlier: extra fields
-            {"level": "yellow", "type": "wind", "description": "Szél", "icon_url": None},
-            {"level": "red", "type": "storm", "description": "Vihar", "icon_url": None},
-            # As saved by 1.12.1: Hungarian type names
-            {"type": "kod", "level": "yellow"},
-            {"type": "fog", "level": "none"},
-            "not an alert",
-        ],
-        "alerts_by_level": {"yellow": [{"type": "wind"}], "orange": [], "red": []},
+def test_only_the_forecasts_are_saved() -> None:
+    """Nothing but the parts the page drops later is written."""
+    assert saved(FORECAST_DATA) == {
+        "location": "Budapest",
+        "sources": {
+            HOURLY: {
+                "data": {
+                    "hourly_forecast": FORECAST_DATA["hourly_forecast"],
+                    "daily_forecast": FORECAST_DATA["daily_forecast"],
+                }
+            }
+        },
     }
-    result = restore(HOURLY, saved(data, NOW - timedelta(minutes=5)), NOW)
-    assert result["alerts"] == [{"type": "wind", "level": "yellow"}]
-    assert "alerts_by_level" not in result
 
 
-class TestRestoreCurrent:
-    """Current conditions page."""
-
-    @pytest.mark.parametrize("age", [timedelta(minutes=40), timedelta(days=2)])
-    def test_restores_everything_however_old(self, age: timedelta) -> None:
-        """The values come back until the next successful fetch replaces them."""
-        item = saved(CURRENT_DATA, NOW - age)
-        assert restore(CURRENT, item, NOW) == CURRENT_DATA
+def test_a_page_without_daily_forecast() -> None:
+    """Only what the page had is saved."""
+    data = saved({"hourly_forecast": []})["sources"][HOURLY]["data"]
+    assert data == {"hourly_forecast": []}
 
 
-class TestRestoreForecast:
-    """Forecast page: hourly and daily forecast, alerts, wind, today's max/min."""
+def test_restored_forecast() -> None:
+    """The hourly items and the daily entries come back."""
+    forecast = restored_forecast(saved(FORECAST_DATA))
+    assert forecast == {
+        "hourly_forecast": FORECAST_DATA["hourly_forecast"],
+        "daily_forecast": FORECAST_DATA["daily_forecast"],
+    }
+    assert today_item(forecast, TODAY) == FORECAST_DATA["daily_forecast"][0]
 
-    def test_fresh_keeps_everything_still_valid(self) -> None:
-        """19:00 is over at 20:30; 20:00 still runs; yesterday's day is dropped."""
-        item = saved(FORECAST_DATA, NOW - timedelta(minutes=30))
-        result = restore(HOURLY, item, NOW)
-        assert [h["datetime"][11:16] for h in result["hourly_forecast"]] == [
-            "20:00",
-            "21:00",
+
+def test_no_entry_of_today() -> None:
+    """Other days' entries are not today's."""
+    assert today_item(FORECAST_DATA, date(2026, 11, 2)) is None
+
+
+def test_old_daily_item_updated() -> None:
+    """
+    A daily item saved by an earlier version is brought up to date.
+
+    Its date-only datetime becomes local midnight, its precipitation
+    probability goes; one without a date is dropped.
+    """
+    data = {
+        "daily_forecast": [
+            {"datetime": "y"},
+            {"datetime": "2026-10-29", "precipitation": 3, "precipitation_probability": 70},
         ]
-        assert [d["datetime"] for d in result["daily_forecast"]] == [
-            "2026-10-29T00:00:00+01:00",
-            "2026-10-30T00:00:00+01:00",
-        ]
-        assert result["wind_bearing"] == 12
-        assert result["wind_strength"] == "moderate_breeze"
-        assert result["wind_speed"] == 20
-        assert result["wind_gust_speed"] == 35
-        assert result["precipitation"] == 0.81
-        assert result["precipitation_probability"] == 25
-        assert result["alerts"] == FORECAST_DATA["alerts"]
-        assert result["warnings"] == FORECAST_DATA["warnings"]
-        assert result["warning_level"] == "orange"
-        assert result["temperature_max_today"] == 16
-        assert result["temperature_min_today"] == 6
-
-    def test_old_same_day_keeps_forecasts_and_todays_values(self) -> None:
-        """
-        Alerts and warnings are kept however old.
-
-        The current hour's wind and precipitation would come from its item;
-        this one has none, and no storm.
-        """
-        item = saved(FORECAST_DATA, NOW - timedelta(hours=4))
-        assert restore(HOURLY, item, NOW) == {
-            "hourly_forecast": FORECAST_DATA["hourly_forecast"][1:],
-            "daily_forecast": FORECAST_DATA["daily_forecast"][1:],
-            "temperature_max_today": 16,
-            "temperature_min_today": 6,
-            "alerts": FORECAST_DATA["alerts"],
-            "warnings": FORECAST_DATA["warnings"],
-            "warning_level": "orange",
-            "storm_expected": False,
-        }
-
-    def test_next_day_drops_todays_values(self) -> None:
-        """Yesterday's max/min are not today's; past hours and days go too."""
-        item = saved(FORECAST_DATA, NOW - timedelta(hours=3))
-        tomorrow = NOW + timedelta(hours=5)  # 01:30 on the 30th
-        assert restore(HOURLY, item, tomorrow) == {
-            "daily_forecast": FORECAST_DATA["daily_forecast"][2:],
-            "alerts": FORECAST_DATA["alerts"],
-            "warnings": FORECAST_DATA["warnings"],
-            "warning_level": "orange",
-        }
-
-    def test_all_past_keeps_only_the_alerts(self) -> None:
-        """Of a forecast that is completely over, only the alerts and warnings stay."""
-        item = saved(FORECAST_DATA, NOW - timedelta(days=2))
-        assert restore(HOURLY, item, NOW + timedelta(days=2)) == {
-            "alerts": FORECAST_DATA["alerts"],
-            "warnings": FORECAST_DATA["warnings"],
-            "warning_level": "orange",
-        }
-
-    def test_invalid_daily_dates_dropped(self) -> None:
-        """Daily entries without a real date are not restored."""
-        data = {"daily_forecast": [{"datetime": "y"}, {"datetime": "2026-10-30T00:00:00+01:00"}]}
-        assert restore(HOURLY, saved(data, NOW - timedelta(hours=3)), NOW) == {
-            "daily_forecast": [{"datetime": "2026-10-30T00:00:00+01:00"}]
-        }
-
-    def test_old_daily_items_updated(self) -> None:
-        """
-        A daily item saved by an earlier version is brought up to date.
-
-        Its date-only datetime becomes local midnight, its precipitation
-        probability goes.
-        """
-        data = {
-            "daily_forecast": [
-                {"datetime": "2026-10-30", "precipitation": 3, "precipitation_probability": 70}
-            ]
-        }
-        assert restore(HOURLY, saved(data, NOW - timedelta(hours=3)), NOW) == {
-            "daily_forecast": [{"datetime": "2026-10-30T00:00:00+01:00", "precipitation": 3}]
-        }
+    }
+    assert restored_forecast(saved(data))["daily_forecast"] == [
+        {"datetime": "2026-10-29T00:00:00+01:00", "precipitation": 3}
+    ]
 
 
 @pytest.mark.parametrize(
     "item",
-    [{}, {"fetched": "not a date", "data": {}}, {"fetched": NOW.isoformat()}],
+    [
+        {},
+        {"sources": None},
+        {"sources": {HOURLY: {}}},
+        {"sources": {HOURLY: {"data": {"hourly_forecast": None}}}},
+        {"sources": {HOURLY: {"data": {"hourly_forecast": ["broken"]}}}},
+    ],
 )
 def test_broken_saved_data_restores_nothing(item: dict) -> None:
     """A damaged file never breaks setup."""
-    assert restore(CURRENT, item, NOW) == {}
-
-
-def test_unknown_source_restores_nothing() -> None:
-    """Data for a page that is no longer used (e.g. the old "daily") is ignored."""
-    assert restore("daily", saved({"daily_forecast": []}, NOW), NOW) == {}
-
-
-def test_restore_skips_hourly_items_without_a_valid_time() -> None:
-    """Hourly items without a time, or with a broken one, are dropped."""
-    valid = {"datetime": "2026-10-29T20:00:00+01:00", "temperature": 10}
-    saved = {
-        "fetched": (NOW - timedelta(minutes=30)).isoformat(),
-        "data": {
-            "hourly_forecast": [{"temperature": 1}, {"datetime": "broken"}, valid],
-        },
-    }
-    assert restore(HOURLY, saved, NOW)["hourly_forecast"] == [valid]
-
-
-@pytest.mark.parametrize(
-    ("source", "data"),
-    [
-        (HUMIDITY_MAP, {"humidity": 59.0, "dew_point": 2.0}),
-        (PRESSURE_MAP, {"pressure": 1029.2}),
-        (UV_MAP, {"uv_index": 0.3}),
-    ],
-)
-def test_restore_maps_however_old(source: str, data: dict) -> None:
-    """The values from the maps come back, however old."""
-    fresh = {"fetched": (NOW - timedelta(minutes=30)).isoformat(), "data": data}
-    old = {"fetched": (NOW - timedelta(days=2)).isoformat(), "data": data}
-    assert restore(source, fresh, NOW) == data
-    assert restore(source, old, NOW) == data
-
-
-def test_restore_storm_value_only_if_fresh() -> None:
-    """The storm value is kept for an hour; without the hourly items it's gone."""
-    data = {"storm_expected": True}
-    fresh = {"fetched": (NOW - timedelta(minutes=30)).isoformat(), "data": data}
-    old = {"fetched": (NOW - timedelta(minutes=90)).isoformat(), "data": data}
-    assert restore(HOURLY, fresh, NOW)["storm_expected"] is True
-    assert "storm_expected" not in restore(HOURLY, old, NOW)
-
-
-def _saved_by_an_earlier_version() -> dict:
-    """Return forecast data with the old midpoint speed and no gust."""
-    return {
-        "fetched": (NOW - timedelta(minutes=10)).isoformat(),
-        "data": {
-            "wind_strength": "gentle_breeze",
-            "wind_speed": 16,
-            "hourly_forecast": [
-                {
-                    "datetime": "2026-10-29T20:00:00+01:00",
-                    "wind_strength": "gentle_breeze",
-                    "native_wind_speed": 16,
-                },
-                {"datetime": "2026-10-29T21:00:00+01:00", "native_wind_speed": 9},
-            ],
-        },
-    }
+    assert restored_forecast(item) == {"hourly_forecast": [], "daily_forecast": []}
 
 
 def test_restore_recalculates_the_wind_estimates() -> None:
     """Saved estimates are replaced by the current ones from the wind strength."""
-    result = restore(HOURLY, _saved_by_an_earlier_version(), NOW)
-
-    assert result["wind_speed"] == 12
-    assert result["wind_gust_speed"] == 21
-    assert result["hourly_forecast"][0]["native_wind_speed"] == 12
-    assert result["hourly_forecast"][0]["native_wind_gust_speed"] == 21
-
-
-def test_restore_keeps_items_without_a_known_wind_strength() -> None:
-    """Without a known strength there is nothing to recalculate from."""
-    saved = _saved_by_an_earlier_version()
-    saved["data"]["wind_strength"] = "unknown_word"
-
-    result = restore(HOURLY, saved, NOW)
-
-    assert result["wind_speed"] == 16
-    assert "wind_gust_speed" not in result
-    assert result["hourly_forecast"][1] == {
-        "datetime": "2026-10-29T21:00:00+01:00",
-        "native_wind_speed": 9,
-    }
-
-
-def test_restore_after_an_hour_takes_the_current_hour_from_its_item() -> None:
-    """
-    Once old, the saved current values are not used.
-
-    They are taken from the forecast's item for the hour now running (20:00 at
-    20:30), as a fetch would.
-    """
-    saved = {
-        "fetched": (NOW - timedelta(minutes=90)).isoformat(),
-        "data": {
-            "wind_strength": "fresh_breeze",
-            "wind_bearing": 90,
-            "precipitation": 2.5,
-            "storm_expected": True,
-            "hourly_forecast": [
-                {
-                    "datetime": "2026-10-29T20:00:00+01:00",
-                    "wind_strength": "gentle_breeze",
-                    "wind_bearing": 180,
-                    "precipitation": 0.2,
-                    "precipitation_probability": 40,
-                },
-                {"datetime": "2026-10-29T21:00:00+01:00", "storm": True},
-            ],
-        },
-    }
-
-    result = restore(HOURLY, saved, NOW)
-
-    assert result["wind_strength"] == "gentle_breeze"
-    assert result["wind_bearing"] == 180
-    assert result["wind_speed"] == 12
-    assert result["wind_gust_speed"] == 21
-    assert result["precipitation"] == 0.2
-    assert result["precipitation_probability"] == 40
-    # The next hour is stormy
-    assert result["storm_expected"] is True
-
-
-def test_restore_within_the_hour_of_the_fetch_keeps_the_current_values() -> None:
-    """Fetched at 20:05, restored at 20:55: still the same hour."""
     data = {
-        "wind_bearing": 90,
-        "precipitation": 2.5,
         "hourly_forecast": [
-            {"datetime": "2026-10-29T20:00:00+01:00", "wind_bearing": 180},
-        ],
+            {"wind_strength": "gentle_breeze", "native_wind_speed": 16},
+            {"wind_strength": "unknown_word", "native_wind_speed": 9},
+        ]
     }
-    fetched = NOW.replace(minute=5)
-    result = forecast_as_of(data, fetched, NOW.replace(minute=55))
-    assert result["wind_bearing"] == 90
-    assert result["precipitation"] == 2.5
+
+    first, second = restored_forecast(saved(data))["hourly_forecast"]
+
+    assert first["native_wind_speed"] == 12
+    assert first["native_wind_gust_speed"] == 21
+    assert second == {"wind_strength": "unknown_word", "native_wind_speed": 9}
 
 
-def test_restore_in_the_next_hour_moves_the_current_values_on() -> None:
-    """Fetched at 19:55, only 35 minutes ago at 20:30, but for the 19:00 hour."""
-    data = {
-        "wind_bearing": 90,
-        "precipitation": 2.5,
-        "storm_expected": False,
-        "hourly_forecast": [
-            {"datetime": "2026-10-29T19:00:00+01:00", "wind_bearing": 90},
-            {"datetime": "2026-10-29T20:00:00+01:00", "wind_bearing": 180},
-            {"datetime": "2026-10-29T21:00:00+01:00", "storm": True},
-        ],
-    }
-    result = forecast_as_of(data, NOW - timedelta(minutes=35), NOW)
-    assert result["wind_bearing"] == 180
-    assert "precipitation" not in result
-    assert result["storm_expected"] is True
-    assert [h["datetime"][11:16] for h in result["hourly_forecast"]] == [
-        "20:00",
-        "21:00",
-    ]
-
-
-def test_forecast_as_of_is_repeatable() -> None:
-    """Applied again to its own result (as on every update), nothing changes."""
-    item = saved(FORECAST_DATA, NOW - timedelta(minutes=90))
-    once = restore(HOURLY, item, NOW)
-    fetched = datetime.fromisoformat(item["fetched"])
-    assert forecast_as_of(once, fetched, NOW) == once
-
-
-def test_restore_after_an_hour_without_the_current_hour() -> None:
-    """Without an item for the hour now running there are no current values."""
-    saved = {
-        "fetched": (NOW - timedelta(minutes=90)).isoformat(),
-        "data": {
-            "wind_strength": "fresh_breeze",
-            "hourly_forecast": [
-                {"datetime": "2026-10-29T21:00:00+01:00", "wind_strength": "calm"},
-            ],
+FOLLOWED = {
+    "hourly_forecast": [
+        {"temperature": 1},
+        {"datetime": "broken"},
+        {"datetime": "2026-10-29T19:00:00+01:00", "wind_bearing": 90},
+        {
+            "datetime": "2026-10-29T20:00:00+01:00",
+            "wind_bearing": 180,
+            "precipitation": 0.2,
         },
+        {"datetime": "2026-10-29T21:00:00+01:00", "storm": True},
+    ],
+    "daily_forecast": [
+        {"datetime": "2026-10-28T00:00:00+01:00", "temperature": 15},
+        {"datetime": "2026-10-29T00:00:00+01:00", "temperature": 16, "templow": 6},
+        {"datetime": "2026-10-30T00:00:00+01:00", "temperature": 14},
+    ],
+    "alerts": [{"type": "wind", "level": "yellow"}],
+    "wind_bearing": 90,
+}
+
+
+def at(hour: int, minute: int = 0, day: int = 29) -> datetime:
+    """Return a Budapest-local time in October 2026."""
+    return datetime(2026, 10, day, hour, minute, tzinfo=BUDAPEST)
+
+
+def test_forecast_as_of() -> None:
+    """From the running hour and today on, without alerts."""
+    assert forecast_as_of(FOLLOWED, at(20, 30)) == {
+        "hourly_forecast": FOLLOWED["hourly_forecast"][3:],
+        "daily_forecast": FOLLOWED["daily_forecast"][1:],
+        "wind_bearing": 180,
+        "precipitation": 0.2,
+        "storm_expected": True,
+        "temperature_max_today": 16,
+        "temperature_min_today": 6,
     }
 
-    result = restore(HOURLY, saved, NOW)
 
-    assert "wind_strength" not in result
-    assert "wind_speed" not in result
-    assert result["storm_expected"] is False
+@pytest.mark.parametrize(
+    "now",
+    [at(18, 59), at(22), at(20, day=30), at(20) - timedelta(days=3)],
+)
+def test_forecast_as_of_without_the_running_hour(now: datetime) -> None:
+    """A forecast that doesn't have the running hour gives nothing."""
+    assert forecast_as_of(FOLLOWED, now) == {}
 
 
-def test_restore_alerts_and_warnings_however_old() -> None:
-    """Alerts and warnings stay until the next successful fetch replaces them."""
-    data = {
-        "alerts": [{"type": "wind", "level": "yellow"}],
-        "warnings": [{"type": "fog", "level": "yellow"}],
-        "warning_level": "yellow",
-    }
-    old = {"fetched": (NOW - timedelta(days=2)).isoformat(), "data": data}
-    assert restore(HOURLY, old, NOW) == data
+def test_forecast_as_of_without_a_forecast() -> None:
+    """Before anything was downloaded or saved there is nothing."""
+    assert forecast_as_of({}, at(20)) == {}
+
+
+def test_forecast_as_of_without_daily_forecast() -> None:
+    """No daily entries: no daily forecast, no max/min."""
+    forecast = {"hourly_forecast": FOLLOWED["hourly_forecast"]}
+    result = forecast_as_of(forecast, at(20))
+    assert "daily_forecast" not in result
+    assert "temperature_max_today" not in result

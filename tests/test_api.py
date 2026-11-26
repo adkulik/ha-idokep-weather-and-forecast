@@ -173,6 +173,8 @@ class TestIdokepApiClient:
         """Test condition mapping for special conditions."""
         assert WeatherConditionMapper.map_condition("zivatar") == "lightning-rainy"
         assert WeatherConditionMapper.map_condition("erős eső") == "pouring"
+        assert WeatherConditionMapper.map_condition("Intenzív eső") == "pouring"
+        assert WeatherConditionMapper.map_condition("Hózivatar") == "snowy"
         assert WeatherConditionMapper.map_condition("jégeső") == "hail"
         assert WeatherConditionMapper.map_condition("havazás") == "snowy"
         assert WeatherConditionMapper.map_condition("havas eső") == "snowy-rainy"
@@ -1146,8 +1148,8 @@ class TestHourlyParserBranches:
         ]
         assert probabilities == [18, 0]
 
-    def test_current_hour_falls_back_to_first_slot(self) -> None:
-        """If no slot contains now, the first forecast item is used."""
+    def test_no_current_hour_without_its_slot(self) -> None:
+        """If no slot contains now, no other hour stands in for it."""
         forecast = [
             {"datetime": "2026-10-29T17:00:00+01:00", "wind_bearing": 90},
             {"datetime": "2026-10-29T18:00:00+01:00", "wind_bearing": 180},
@@ -1155,8 +1157,7 @@ class TestHourlyParserBranches:
         now = dt.datetime(
             2026, 10, 29, 16, 30, tzinfo=dt.timezone(dt.timedelta(hours=1))
         )
-        item = HourlyForecastParser._current_hour_item(forecast, now)
-        assert item["wind_bearing"] == 90
+        assert HourlyForecastParser._current_hour_item(forecast, now) is None
 
     def _parse_at(
         self, parser: HourlyForecastParser, now: dt.datetime, hours: list[str]
@@ -2341,6 +2342,8 @@ def test_every_description_has_a_cloud_coverage() -> None:
         ("borult", 100),
         (" Eső ", 100),
         ("zivatar", 75),
+        ("hózivatar", 75),
+        ("intenzív eső", 100),
         ("párás", 50),
         ("ismeretlen", None),
         (None, None),
@@ -2373,6 +2376,8 @@ def test_hourly_cloud_coverage(text: str | None, expected: int | None) -> None:
     ("text", "expected"),
     [
         ("Zivatar", True),
+        ("Hózivatar", False),
+        ("Intenzív eső", False),
         ("Villámlás", True),
         ("Jégeső", True),
         ("Eső viharos széllel", True),

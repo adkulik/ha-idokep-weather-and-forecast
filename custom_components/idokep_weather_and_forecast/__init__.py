@@ -109,12 +109,12 @@ async def async_setup_entry(
         coordinator=coordinator,
     )
 
-    # Start from the data saved before the restart (if still valid), so the
-    # entry also comes up while idokep.hu is unreachable
+    # The forecast saved before the restart, to complete the first download
     await coordinator.async_restore()
 
-    # Ensure data is available before creating entities
-    await coordinator.async_config_entry_first_refresh()
+    # Not a first refresh, which would fail the setup: what can't be downloaded
+    # is unavailable and retried every minute
+    await coordinator.async_refresh()
 
     station = None
     if codes := station_codes(entry):
@@ -128,9 +128,6 @@ async def async_setup_entry(
             max_age=max_age_minutes(entry),
         )
         entry.runtime_data.station = station
-        # Not a first refresh: an unreachable station must not stop the
-        # forecast from setting up (its sensors are unavailable until the
-        # next successful fetch)
         await station.async_refresh()
     else:
         _remove_station_device(hass, entry)
@@ -175,8 +172,9 @@ async def _async_setup_radar_entry(
     )
     entry.runtime_data = RadarData(coordinator=coordinator)
 
-    # Downloads all frames and builds the first animation
-    await coordinator.async_config_entry_first_refresh()
+    # Downloads all frames and builds the first animation; if that fails, it
+    # is retried every minute
+    await coordinator.async_refresh()
 
     await hass.config_entries.async_forward_entry_setups(entry, RADAR_PLATFORMS)
     # Every minute at second 59: checks on x:00:59, x:05:59, ... and retries in

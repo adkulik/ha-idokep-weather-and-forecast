@@ -226,25 +226,38 @@ class TestIdokepSensorEntityDescriptions:
         assert not IdokepSensor(mock_coordinator, desc).available
 
     def test_wind_gust_sensor_shows_the_estimate(self, mock_coordinator: Mock) -> None:
-        """The value is the parser's gust; without one it is unknown, not unavailable."""
+        """The value is the parser's gust; without one it is unavailable."""
         desc = next(d for d in ENTITY_DESCRIPTIONS if d.key == "wind_gust_speed")
         mock_coordinator.last_update_success = True
-        mock_coordinator.data = {"wind_gust_speed": 28}
-        assert IdokepSensor(mock_coordinator, desc).native_value == 28
+        mock_coordinator.data = {"wind_gust_speed": 35.0}
+        sensor = IdokepSensor(mock_coordinator, desc)
+        assert sensor.native_value == 35.0
+        assert sensor.available
 
         mock_coordinator.data = {}
         sensor = IdokepSensor(mock_coordinator, desc)
         assert sensor.native_value is None
-        assert sensor.available
+        assert not sensor.available
 
-    def test_other_sensors_stay_available_without_value(
-        self, mock_coordinator: Mock
+    @pytest.mark.parametrize(
+        "key", [d.key for d in ENTITY_DESCRIPTIONS if d.key != "condition"]
+    )
+    def test_every_sensor_is_unavailable_without_a_value(
+        self, mock_coordinator: Mock, key: str
     ) -> None:
-        """The other sensors keep showing unknown, as before."""
-        desc = next(d for d in ENTITY_DESCRIPTIONS if d.key == "wind_speed")
-        mock_coordinator.last_update_success = True
+        """No sensor shows unknown."""
+        desc = next(d for d in ENTITY_DESCRIPTIONS if d.key == key)
         mock_coordinator.data = {}
-        assert IdokepSensor(mock_coordinator, desc).available
+        assert not IdokepSensor(mock_coordinator, desc).available
+
+    @pytest.mark.parametrize("condition", [None, "unknown"])
+    def test_condition_sensor_unavailable_without_a_known_condition(
+        self, mock_coordinator: Mock, condition: str | None
+    ) -> None:
+        """An unrecognised description is unavailable too."""
+        desc = next(d for d in ENTITY_DESCRIPTIONS if d.key == "condition")
+        mock_coordinator.data = {"condition": condition}
+        assert not IdokepSensor(mock_coordinator, desc).available
 
     def test_precipitation_description(self) -> None:
         """Millimetres with the precipitation device class, no state class."""

@@ -8,12 +8,11 @@ from __future__ import annotations
 import json
 import zoneinfo
 from datetime import datetime, timedelta
-from logging import getLogger
+from logging import WARNING, getLogger
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from homeassistant.helpers.update_coordinator import UpdateFailed
 from homeassistant.util import dt as dt_util
 
 from custom_components.idokep_weather_and_forecast.api import (
@@ -53,6 +52,13 @@ PRESSURE_DATA = {"pressure": 1029.2}
 UV_DATA = {"uv_index": 0.3}
 MAP_DATA = {**HUMIDITY_DATA, **PRESSURE_DATA, **UV_DATA}
 ALL_SOURCES = {CURRENT, HOURLY, HUMIDITY_MAP, PRESSURE_MAP, UV_MAP}
+FETCHERS = (
+    (CURRENT, "async_get_current_weather"),
+    (HOURLY, "async_get_hourly_forecast"),
+    (HUMIDITY_MAP, "async_get_humidity_map"),
+    (PRESSURE_MAP, "async_get_pressure_map"),
+    (UV_MAP, "async_get_uv_map"),
+)
 
 
 @pytest.fixture(autouse=True)
@@ -121,6 +127,19 @@ async def update_at(
         return await coordinator._async_update_data()
 
 
+async def restore_at(
+    coordinator: IdokepDataUpdateCoordinator, now: datetime
+) -> None:
+    """Restore the saved data as if it were now."""
+    with patch.object(dt_util, "utcnow", return_value=dt_util.as_utc(now)):
+        await coordinator.async_restore()
+
+
+def saved_forecast(data: dict[str, Any]) -> dict[str, Any]:
+    """Return the file content holding a forecast."""
+    return {"location": "Budapest", "sources": {HOURLY: {"data": data}}}
+
+
 class TestScheduleTimes:
     """Next-fetch time calculations."""
 
@@ -177,6 +196,14 @@ class TestSourceSchedule:
         schedule.mark_failure(now)
         assert schedule.next_due == local(2026, 10, 29, 12, 10)
 
+    def test_every_minute_until_the_first_success(self) -> None:
+        """Before anything worked since the start, a failure retries in a minute."""
+        schedule = SourceSchedule(next_full_hour, timedelta(minutes=10))
+
+        for minute in (0, 1, 2):
+            schedule.mark_failure(local(2026, 10, 29, 12, minute))
+            assert schedule.next_due == local(2026, 10, 29, 12, minute + 1)
+
 
 class TestCoordinatorUpdates:
     """Fetching only what is due and keeping the rest."""
@@ -224,36 +251,48 @@ class TestCoordinatorUpdates:
         assert data["daily_forecast"] == HOURLY_DATA["daily_forecast"]
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("source", "fetcher", "retry_at"),
-        [
-            (CURRENT, "async_get_current_weather", local(2026, 10, 29, 12, 8)),
-            (HOURLY, "async_get_hourly_forecast", local(2026, 10, 29, 12, 17)),
-            (HUMIDITY_MAP, "async_get_humidity_map", local(2026, 10, 29, 12, 8)),
-            (PRESSURE_MAP, "async_get_pressure_map", local(2026, 10, 29, 12, 8)),
-            (UV_MAP, "async_get_uv_map", local(2026, 10, 29, 12, 8)),
-        ],
-    )
-    async def test_failed_fetch_is_retried(
+    @pytest.mark.parametrize(("source", "fetcher"), FETCHERS)
+    async def test_failure_after_the_start_is_retried_every_minute(
         self,
         coordinator: IdokepDataUpdateCoordinator,
         client: Mock,
         source: str,
         fetcher: str,
-        retry_at: datetime,
     ) -> None:
-        """Failures retry after 1 min / 10 min respectively."""
+        """Also the forecast, whose later retries are 10 minutes apart."""
         getattr(client, fetcher).side_effect = IdokepApiClientCommunicationError("down")
 
         await update_at(coordinator, local(2026, 10, 29, 12, 7))
+        assert coordinator.schedules[source].next_due == local(2026, 10, 29, 12, 8)
 
-        assert coordinator.schedules[source].next_due == retry_at
+        await update_at(coordinator, local(2026, 10, 29, 12, 8))
+        assert coordinator.schedules[source].next_due == local(2026, 10, 29, 12, 9)
 
     @pytest.mark.asyncio
-    async def test_failure_keeps_last_good_data(
+    @pytest.mark.parametrize(("source", "fetcher"), FETCHERS)
+    async def test_later_failure_is_retried_on_the_pages_interval(
+        self,
+        coordinator: IdokepDataUpdateCoordinator,
+        client: Mock,
+        source: str,
+        fetcher: str,
+    ) -> None:
+        """Once it has worked: 10 minutes for the forecast, 1 for the others."""
+        await update_at(coordinator, local(2026, 10, 29, 12, 7))
+        getattr(client, fetcher).side_effect = IdokepApiClientCommunicationError("down")
+
+        await update_at(coordinator, local(2026, 10, 29, 13, 0))
+
+        minute = 10 if source == HOURLY else 1
+        assert coordinator.schedules[source].next_due == local(
+            2026, 10, 29, 13, minute
+        )
+
+    @pytest.mark.asyncio
+    async def test_failed_page_has_no_data_until_it_works_again(
         self, coordinator: IdokepDataUpdateCoordinator, client: Mock
     ) -> None:
-        """A failed page keeps serving its previous data."""
+        """Nothing old is served for a page that failed."""
         await update_at(coordinator, local(2026, 10, 29, 12, 7))
         client.async_get_current_weather.side_effect = (
             IdokepApiClientCommunicationError("down")
@@ -261,26 +300,40 @@ class TestCoordinatorUpdates:
 
         data = await update_at(coordinator, local(2026, 10, 29, 12, 15))
 
+        assert data == {
+            **HOURLY_DATA,
+            **MAP_DATA,
+            "forecast_now": HOURLY_DATA["hourly_forecast"][0],
+            "storm_now": False,
+        }
+
+        # Not due: still nothing
+        data = await update_at(coordinator, local(2026, 10, 29, 12, 15))
+        assert "temperature" not in data
+
+        client.async_get_current_weather.side_effect = None
+        data = await update_at(coordinator, local(2026, 10, 29, 12, 16))
         assert data["temperature"] == CURRENT_DATA["temperature"]
-        assert coordinator.schedules[CURRENT].next_due == local(2026, 10, 29, 12, 16)
 
     @pytest.mark.asyncio
-    async def test_kept_forecast_moves_on_to_the_next_hour(
+    async def test_failed_forecast_is_followed_hour_by_hour(
         self, coordinator: IdokepDataUpdateCoordinator, client: Mock
     ) -> None:
         """
-        When the 13:00 download fails, the current values come from 13:00's item.
+        While the page fails, the last forecast moves on; alerts are gone.
 
-        A successful retry then replaces them with the new page's values.
+        A successful retry replaces it.
         """
         client.async_get_hourly_forecast.return_value = {
             "hourly_forecast": [
                 {"datetime": "2026-10-29T12:00:00+01:00", "wind_bearing": 90},
                 {"datetime": "2026-10-29T13:00:00+01:00", "wind_bearing": 180},
-                {"datetime": "2026-10-29T14:00:00+01:00", "storm": True},
+                {"datetime": "2026-10-29T14:00:00+01:00", "wind_bearing": 270},
             ],
             "wind_bearing": 90,
-            "storm_expected": False,
+            "alerts": [{"type": "wind", "level": "yellow"}],
+            "warnings": [],
+            "warning_level": "none",
         }
         await update_at(coordinator, local(2026, 10, 29, 12, 7))
         client.async_get_hourly_forecast.side_effect = (
@@ -288,82 +341,152 @@ class TestCoordinatorUpdates:
         )
 
         data = await update_at(coordinator, local(2026, 10, 29, 13, 0))
-
         assert data["wind_bearing"] == 180
-        assert data["storm_expected"] is True
-        assert data["hourly_forecast"][0]["datetime"] == "2026-10-29T13:00:00+01:00"
+        assert len(data["hourly_forecast"]) == 2
+        assert not {"alerts", "warnings", "warning_level"} & set(data)
+        # The current page works: its values are used
+        assert "forecast_now" not in data
+
+        # Not retried yet, but the hour moves on
+        data = await update_at(coordinator, local(2026, 10, 29, 14, 0))
+        assert data["wind_bearing"] == 270
+
+        # No hour left
+        data = await update_at(coordinator, local(2026, 10, 29, 15, 0))
+        assert "hourly_forecast" not in data
+        assert "wind_bearing" not in data
 
         client.async_get_hourly_forecast.side_effect = None
         client.async_get_hourly_forecast.return_value = {
             "hourly_forecast": [
-                {"datetime": "2026-10-29T13:00:00+01:00", "wind_bearing": 270},
+                {"datetime": "2026-10-29T15:00:00+01:00", "wind_bearing": 10},
             ],
-            "wind_bearing": 270,
-            "storm_expected": False,
+            "wind_bearing": 10,
         }
-        data = await update_at(coordinator, local(2026, 10, 29, 13, 10))
-
-        assert data["wind_bearing"] == 270
-        assert data["storm_expected"] is False
+        data = await update_at(coordinator, local(2026, 10, 29, 15, 10))
+        assert data["wind_bearing"] == 10
 
     @pytest.mark.asyncio
-    async def test_kept_alerts_stay_while_downloads_fail(
+    @pytest.mark.parametrize("forecast_down", [False, True])
+    async def test_running_hour_stands_in_without_the_current_page(
+        self,
+        coordinator: IdokepDataUpdateCoordinator,
+        client: Mock,
+        forecast_down: bool,
+    ) -> None:
+        """The forecast's hour counts as now, downloaded or saved."""
+        stormy = {"datetime": "2026-10-29T13:00:00+01:00", "storm": True}
+        client.async_get_hourly_forecast.return_value = {
+            "hourly_forecast": [HOURLY_DATA["hourly_forecast"][0], stormy]
+        }
+        data = await update_at(coordinator, local(2026, 10, 29, 12, 7))
+        assert "forecast_now" not in data  # the current page works
+        error = IdokepApiClientCommunicationError("down")
+        client.async_get_current_weather.side_effect = error
+
+        data = await update_at(coordinator, local(2026, 10, 29, 12, 10))
+        assert data["forecast_now"] == HOURLY_DATA["hourly_forecast"][0]
+        assert data["storm_now"] is False
+        assert "temperature" not in data
+
+        if forecast_down:
+            client.async_get_hourly_forecast.side_effect = error
+        data = await update_at(coordinator, local(2026, 10, 29, 13, 0))
+        assert data["forecast_now"] == stormy
+        assert data["storm_now"] is True
+
+    @pytest.mark.asyncio
+    async def test_no_stand_in_without_the_running_hour(
         self, coordinator: IdokepDataUpdateCoordinator, client: Mock
     ) -> None:
-        """Alerts and warnings stay until a download succeeds, however long that takes."""
-        client.async_get_hourly_forecast.return_value = {
-            **HOURLY_DATA,
-            "alerts": [{"type": "wind", "level": "yellow"}],
-            "warnings": [{"type": "fog", "level": "yellow"}],
-            "warning_level": "yellow",
-        }
+        """A forecast starting with the next hour can't say what it's like now."""
+        client.async_get_current_weather.side_effect = (
+            IdokepApiClientCommunicationError("down")
+        )
+
+        data = await update_at(coordinator, local(2026, 10, 29, 11, 30))
+
+        assert "hourly_forecast" in data
+        assert not {"forecast_now", "storm_now"} & set(data)
+
+    @pytest.mark.asyncio
+    async def test_failed_forecast_is_tried_at_the_full_hour(
+        self, coordinator: IdokepDataUpdateCoordinator, client: Mock
+    ) -> None:
+        """The regular fetch isn't put off by a retry."""
         await update_at(coordinator, local(2026, 10, 29, 12, 7))
         client.async_get_hourly_forecast.side_effect = (
             IdokepApiClientCommunicationError("down")
         )
 
-        data = await update_at(coordinator, local(2026, 10, 30, 9, 10))
-        assert data["alerts"] == [{"type": "wind", "level": "yellow"}]
-        assert data["warnings"] == [{"type": "fog", "level": "yellow"}]
-        assert data["warning_level"] == "yellow"
+        await update_at(coordinator, local(2026, 10, 29, 13, 55))
+
+        assert coordinator.schedules[HOURLY].next_due == local(2026, 10, 29, 14, 0)
 
     @pytest.mark.asyncio
     async def test_page_without_data_is_a_failure(
         self, coordinator: IdokepDataUpdateCoordinator, client: Mock
     ) -> None:
         """A page missing its main data counts as failed and is retried."""
-        client.async_get_hourly_forecast.return_value = {}
+        client.async_get_hourly_forecast.return_value = {"alerts": []}
 
-        await update_at(coordinator, local(2026, 10, 29, 12, 7))
+        data = await update_at(coordinator, local(2026, 10, 29, 12, 7))
 
-        assert coordinator.schedules[HOURLY].next_due == local(2026, 10, 29, 12, 17)
+        assert "alerts" not in data
+        assert coordinator.schedules[HOURLY].next_due == local(2026, 10, 29, 12, 8)
 
     @pytest.mark.asyncio
     async def test_unexpected_error_is_a_failure(
-        self, coordinator: IdokepDataUpdateCoordinator, client: Mock
+        self,
+        coordinator: IdokepDataUpdateCoordinator,
+        client: Mock,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """A parser crash only affects its own page."""
+        """A parser crash only affects its own page; logged with its traceback."""
         client.async_get_hourly_forecast.side_effect = ValueError("bad html")
 
         data = await update_at(coordinator, local(2026, 10, 29, 12, 7))
 
-        assert coordinator.schedules[HOURLY].next_due == local(2026, 10, 29, 12, 17)
+        assert coordinator.schedules[HOURLY].next_due == local(2026, 10, 29, 12, 8)
         assert data["temperature"] == CURRENT_DATA["temperature"]
+        [record] = caplog.records
+        assert record.levelno == WARNING
+        assert "bad html" in record.getMessage()
+        assert record.exc_info
 
     @pytest.mark.asyncio
-    async def test_update_fails_without_any_data(
+    async def test_failure_and_recovery_are_each_logged_once(
+        self,
+        coordinator: IdokepDataUpdateCoordinator,
+        client: Mock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """One warning when a page starts failing, one when it works again."""
+        client.async_get_current_weather.side_effect = (
+            IdokepApiClientCommunicationError("down")
+        )
+        for minute in (7, 8, 9):
+            await update_at(coordinator, local(2026, 10, 29, 12, minute))
+        client.async_get_current_weather.side_effect = None
+        for minute in (10, 20):
+            await update_at(coordinator, local(2026, 10, 29, 12, minute))
+
+        assert [(r.levelno, r.getMessage()) for r in caplog.records] == [
+            (WARNING, "Fetching current data for Budapest failed: down"),
+            (WARNING, "Fetching current data for Budapest works again"),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_no_data_when_every_page_fails(
         self, coordinator: IdokepDataUpdateCoordinator, client: Mock
     ) -> None:
-        """With nothing ever fetched the update fails."""
-        error = IdokepApiClientCommunicationError("down")
-        client.async_get_current_weather.side_effect = error
-        client.async_get_hourly_forecast.side_effect = error
-        client.async_get_humidity_map.side_effect = error
-        client.async_get_pressure_map.side_effect = error
-        client.async_get_uv_map.side_effect = error
+        """The update itself works, with nothing to show."""
+        for _, fetcher in FETCHERS:
+            getattr(client, fetcher).side_effect = IdokepApiClientCommunicationError(
+                "down"
+            )
 
-        with pytest.raises(UpdateFailed, match="No weather data found"):
-            await update_at(coordinator, local(2026, 10, 29, 12, 7))
+        assert await update_at(coordinator, local(2026, 10, 29, 12, 7)) == {}
 
 
 class TestTick:
@@ -514,27 +637,27 @@ class TestSavedData:
     """Saving fetched pages and restoring them after a restart."""
 
     @pytest.mark.asyncio
-    async def test_fetch_saves_each_page(
+    async def test_fetch_saves_the_forecast(
         self,
         coordinator: IdokepDataUpdateCoordinator,
         fake_store: type[FakeStore],
     ) -> None:
-        """Successful fetches are written to the entry's file."""
+        """The downloaded forecasts are written to the entry's file."""
         coordinator.config_entry.entry_id = "entry1"
-        with patch.object(
-            dt_util, "utcnow", return_value=dt_util.as_utc(local(2026, 10, 29, 12, 7))
-        ):
-            await coordinator.async_restore()  # nothing saved yet
+        await restore_at(coordinator, local(2026, 10, 29, 12, 7))  # nothing yet
         await update_at(coordinator, local(2026, 10, 29, 12, 7))
 
-        saved = fake_store.files["idokep_weather_and_forecast.entry1"]
-        assert saved["location"] == "Budapest"
-        sources = saved["sources"]
-        assert set(sources) == ALL_SOURCES
-        assert sources[CURRENT]["data"] == CURRENT_DATA
-        assert datetime.fromisoformat(sources[CURRENT]["fetched"]) == local(
-            2026, 10, 29, 12, 7
-        )
+        assert fake_store.files["idokep_weather_and_forecast.entry1"] == {
+            "location": "Budapest",
+            "sources": {
+                HOURLY: {
+                    "data": {
+                        "hourly_forecast": HOURLY_DATA["hourly_forecast"],
+                        "daily_forecast": HOURLY_DATA["daily_forecast"],
+                    }
+                }
+            },
+        }
 
     @pytest.mark.asyncio
     async def test_failed_fetch_keeps_saved_copy(
@@ -543,17 +666,18 @@ class TestSavedData:
         client: Mock,
         fake_store: type[FakeStore],
     ) -> None:
-        """A failing page does not overwrite its saved data."""
+        """A failing forecast page does not overwrite the saved forecast."""
         coordinator.config_entry.entry_id = "entry1"
         await coordinator.async_restore()
         await update_at(coordinator, local(2026, 10, 29, 12, 7))
-        client.async_get_current_weather.side_effect = (
+        saved = fake_store.files["idokep_weather_and_forecast.entry1"]
+        client.async_get_hourly_forecast.side_effect = (
             IdokepApiClientCommunicationError("down")
         )
-        await update_at(coordinator, local(2026, 10, 29, 12, 15))
+        await update_at(coordinator, local(2026, 10, 29, 13, 0))
 
-        sources = fake_store.files["idokep_weather_and_forecast.entry1"]["sources"]
-        assert sources[CURRENT]["data"] == CURRENT_DATA
+        assert fake_store.files["idokep_weather_and_forecast.entry1"] == saved
+        assert coordinator._data_to_save() == saved
 
     @pytest.mark.asyncio
     @pytest.mark.usefixtures("fake_store")
@@ -563,78 +687,30 @@ class TestSavedData:
         client: Mock,
         coordinator: IdokepDataUpdateCoordinator,
     ) -> None:
-        """After a restart with idokep.hu down, the saved data is served."""
-        hourly = {
-            "hourly_forecast": [
-                {"datetime": local(2026, 10, 29, 12, 0).isoformat(), "temperature": 14},
-                {"datetime": local(2026, 10, 29, 13, 0).isoformat(), "temperature": 15},
-            ],
-            "alerts": [],
-            "daily_forecast": [{"datetime": "2026-10-29T00:00:00+01:00", "temperature": 16}],
-        }
-        client.async_get_hourly_forecast.return_value = hourly
+        """Only the forecast comes back, from the running hour on."""
         coordinator.config_entry.entry_id = "entry1"
         await coordinator.async_restore()
         await update_at(coordinator, local(2026, 10, 29, 12, 7))
 
         # "Restart": a new coordinator, and every fetch fails
-        error = IdokepApiClientCommunicationError("down")
-        client.async_get_current_weather.side_effect = error
-        client.async_get_hourly_forecast.side_effect = error
+        for _, fetcher in FETCHERS:
+            getattr(client, fetcher).side_effect = IdokepApiClientCommunicationError(
+                "down"
+            )
         restarted = IdokepDataUpdateCoordinator(
             mock_hass, getLogger(__name__), "test", coordinator.config_entry
         )
-        with patch.object(
-            dt_util, "utcnow", return_value=dt_util.as_utc(local(2026, 10, 29, 12, 30))
-        ):
-            await restarted.async_restore()
-        data = await update_at(restarted, local(2026, 10, 29, 12, 30))
+        await restore_at(restarted, local(2026, 10, 29, 13, 30))
 
-        # No UpdateFailed: the entry starts with the saved data
-        assert data == {**CURRENT_DATA, **hourly, **MAP_DATA}
+        data = await update_at(restarted, local(2026, 10, 29, 13, 30))
 
-    @pytest.mark.asyncio
-    async def test_restore_seeds_todays_min_max(
-        self,
-        coordinator: IdokepDataUpdateCoordinator,
-        client: Mock,
-        fake_store: type[FakeStore],
-    ) -> None:
-        """Today's max/min survive an evening restart."""
-        coordinator.config_entry.entry_id = "entry1"
-        fake_store.files["idokep_weather_and_forecast.entry1"] = {
-            "sources": {
-                HOURLY: {
-                    "fetched": local(2026, 10, 29, 15, 0).isoformat(),
-                    "data": {
-                        "hourly_forecast": [],
-                        "wind_bearing": 10,
-                        "temperature_max_today": 16,
-                        "temperature_min_today": 6,
-                    },
-                }
-            }
+        assert data == {
+            "hourly_forecast": HOURLY_DATA["hourly_forecast"][1:],
+            "daily_forecast": HOURLY_DATA["daily_forecast"],
+            "storm_expected": False,
+            "forecast_now": HOURLY_DATA["hourly_forecast"][1],
+            "storm_now": False,
         }
-        with patch.object(
-            dt_util, "utcnow", return_value=dt_util.as_utc(local(2026, 10, 29, 21, 0))
-        ):
-            await coordinator.async_restore()
-
-        # Six hours old: the wind is dropped, today's max/min kept
-        assert coordinator._source_data[HOURLY] == {
-            "temperature_max_today": 16,
-            "temperature_min_today": 6,
-        }
-        # Saved by an earlier version: only max/min, so a minimal entry
-        client.restore_today_forecast.assert_called_once_with(
-            {
-                "datetime": "2026-10-29T00:00:00+01:00",
-                "temperature": 16,
-                "templow": 6,
-                "condition": None,
-                "precipitation": 0,
-            }
-        )
 
     @pytest.mark.asyncio
     async def test_restore_seeds_todays_daily_entry(
@@ -647,24 +723,13 @@ class TestSavedData:
         today = {"datetime": "2026-10-29T00:00:00+01:00", "temperature": 16, "templow": 6}
         tomorrow = {"datetime": "2026-10-30T00:00:00+01:00", "temperature": 14, "templow": 7}
         coordinator.config_entry.entry_id = "entry1"
-        fake_store.files["idokep_weather_and_forecast.entry1"] = {
-            "sources": {
-                HOURLY: {
-                    "fetched": local(2026, 10, 29, 20, 0).isoformat(),
-                    "data": {
-                        "daily_forecast": [today, tomorrow],
-                        "temperature_max_today": 16,
-                        "temperature_min_today": 6,
-                    },
-                }
-            }
-        }
-        with patch.object(
-            dt_util, "utcnow", return_value=dt_util.as_utc(local(2026, 10, 29, 21, 0))
-        ):
-            await coordinator.async_restore()
+        fake_store.files["idokep_weather_and_forecast.entry1"] = saved_forecast(
+            {"daily_forecast": [today, tomorrow]}
+        )
+        await restore_at(coordinator, local(2026, 10, 29, 21, 0))
 
         client.restore_today_forecast.assert_called_once_with(today)
+        client.restore_hourly_forecast.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_restore_seeds_hourly_forecast(
@@ -673,24 +738,17 @@ class TestSavedData:
         client: Mock,
         fake_store: type[FakeStore],
     ) -> None:
-        """The hours not over are handed to the client (to keep the current hour)."""
-        past = {"datetime": local(2026, 10, 30, 11, 0).isoformat()}
-        current = {"datetime": local(2026, 10, 30, 12, 0).isoformat()}
+        """The hourly items are handed to the client (to keep the current hour)."""
+        items = [{"datetime": local(2026, 10, 30, 12, 0).isoformat()}]
         coordinator.config_entry.entry_id = "entry1"
-        fake_store.files["idokep_weather_and_forecast.entry1"] = {
-            "sources": {
-                HOURLY: {
-                    "fetched": local(2026, 10, 30, 11, 0).isoformat(),
-                    "data": {"hourly_forecast": [past, current]},
-                }
-            }
-        }
-        with patch.object(
-            dt_util, "utcnow", return_value=dt_util.as_utc(local(2026, 10, 30, 12, 51))
-        ):
-            await coordinator.async_restore()
+        fake_store.files["idokep_weather_and_forecast.entry1"] = saved_forecast(
+            {"hourly_forecast": items}
+        )
+        await restore_at(coordinator, local(2026, 10, 30, 12, 51))
 
-        client.restore_hourly_forecast.assert_called_once_with([current])
+        client.restore_hourly_forecast.assert_called_once_with(items)
+        assert coordinator._last_forecast["hourly_forecast"] == items
+        client.restore_today_forecast.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_restore_skips_data_of_another_location(
@@ -702,57 +760,12 @@ class TestSavedData:
         """Data saved before the location was changed is not restored."""
         coordinator.config_entry.entry_id = "entry1"
         fake_store.files["idokep_weather_and_forecast.entry1"] = {
+            **saved_forecast({"hourly_forecast": [{"datetime": "x"}]}),
             "location": "Debrecen-Józsa",
-            "sources": {
-                CURRENT: {
-                    "fetched": local(2026, 10, 30, 12, 45).isoformat(),
-                    "data": CURRENT_DATA,
-                }
-            },
         }
-        with patch.object(
-            dt_util, "utcnow", return_value=dt_util.as_utc(local(2026, 10, 30, 12, 51))
-        ):
-            await coordinator.async_restore()
+        await restore_at(coordinator, local(2026, 10, 30, 12, 51))
 
-        assert coordinator._source_data[CURRENT] == {}
         client.restore_hourly_forecast.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_restore_ignores_unknown_and_expired_pages(
-    coordinator: IdokepDataUpdateCoordinator,
-    fake_store: type[FakeStore],
-) -> None:
-    """Unknown page names and pages with nothing still valid are not restored."""
-    coordinator.config_entry.entry_id = "entry1"
-    fake_store.files["idokep_weather_and_forecast.entry1"] = {
-        "location": "Budapest",
-        "sources": {
-            "unknown_page": {
-                "fetched": local(2026, 10, 30, 12, 45).isoformat(),
-                "data": {},
-            },
-            # Saved the day before: its hours and days are all over (no alerts)
-            HOURLY: {
-                "fetched": local(2026, 10, 29, 12, 45).isoformat(),
-                "data": {k: v for k, v in HOURLY_DATA.items() if k != "alerts"},
-            },
-            # Current conditions are kept however old
-            CURRENT: {
-                "fetched": local(2026, 10, 29, 12, 45).isoformat(),
-                "data": CURRENT_DATA,
-            },
-        },
-    }
-    with patch.object(
-        dt_util, "utcnow", return_value=dt_util.as_utc(local(2026, 10, 30, 12, 51))
-    ):
-        await coordinator.async_restore()
-
-    assert coordinator._source_data[HOURLY] == {}
-    assert coordinator._source_data[CURRENT] == CURRENT_DATA
-    assert "unknown_page" not in coordinator._source_data
 
 
 @pytest.mark.asyncio
@@ -875,35 +888,6 @@ async def test_disabling_a_pages_sensors_stops_it_and_drops_its_values(
     assert "humidity" not in data
     assert "dew_point" not in data
     assert data["pressure"] == PRESSURE_DATA["pressure"]
-    assert HUMIDITY_MAP not in coordinator._fetched
-
-
-@pytest.mark.asyncio
-async def test_restored_values_of_a_disabled_page_are_dropped(
-    coordinator: IdokepDataUpdateCoordinator,
-    registered_entities: list[Mock],
-    fake_store: type[FakeStore],
-) -> None:
-    """Values saved before the sensors were disabled don't come back."""
-    coordinator.config_entry.entry_id = "entry1"
-    registered_entities.extend(_registered("entry1", ("pressure",), disabled=True))
-    fake_store.files["idokep_weather_and_forecast.entry1"] = {
-        "location": "Budapest",
-        "sources": {
-            PRESSURE_MAP: {
-                "fetched": local(2026, 10, 29, 12, 0).isoformat(),
-                "data": PRESSURE_DATA,
-            },
-        },
-    }
-    with patch.object(
-        dt_util, "utcnow", return_value=dt_util.as_utc(local(2026, 10, 29, 12, 7))
-    ):
-        await coordinator.async_restore()
-
-    data = await update_at(coordinator, local(2026, 10, 29, 12, 7))
-
-    assert "pressure" not in data
 
 
 @pytest.mark.asyncio
@@ -991,40 +975,26 @@ async def test_apparent_temperature_uses_the_wind_speed_only(
 
 
 @pytest.mark.asyncio
-async def test_upgrade_mid_hour_has_gust_and_apparent_temperature(
+async def test_restored_current_hour_has_the_current_estimates(
     coordinator: IdokepDataUpdateCoordinator, fake_store: type[FakeStore]
 ) -> None:
-    """Data saved by an earlier version gets the current wind estimates at startup."""
+    """An hour saved by an earlier version gets the current wind estimates."""
     client = IdokepApiClient(Mock())
     coordinator.config_entry.runtime_data.client = client
     coordinator.config_entry.entry_id = "entry1"
-    fetched = local(2026, 10, 29, 12, 0).isoformat()
-    fake_store.files["idokep_weather_and_forecast.entry1"] = {
-        "location": "Budapest",
-        "sources": {
-            HOURLY: {
-                "fetched": fetched,
-                "data": {
+    fake_store.files["idokep_weather_and_forecast.entry1"] = saved_forecast(
+        {
+            "hourly_forecast": [
+                {
+                    "datetime": local(2026, 10, 29, 12, 0).isoformat(),
                     "wind_strength": "gentle_breeze",
-                    "wind_speed": 16,
-                    "hourly_forecast": [
-                        {
-                            "datetime": local(2026, 10, 29, 12, 0).isoformat(),
-                            "wind_strength": "gentle_breeze",
-                            "native_wind_speed": 16,
-                        }
-                    ],
-                },
-            },
-        },
-    }
-    with patch.object(
-        dt_util, "utcnow", return_value=dt_util.as_utc(local(2026, 10, 29, 12, 8))
-    ):
-        await coordinator.async_restore()
+                    "native_wind_speed": 16,
+                }
+            ],
+        }
+    )
+    await restore_at(coordinator, local(2026, 10, 29, 12, 8))
 
-    assert coordinator._source_data[HOURLY]["wind_speed"] == 12
-    assert coordinator._source_data[HOURLY]["wind_gust_speed"] == 21
     kept = client._hourly_parser._last_forecast[0]
     assert kept["native_wind_speed"] == 12
     assert kept["native_wind_gust_speed"] == 21

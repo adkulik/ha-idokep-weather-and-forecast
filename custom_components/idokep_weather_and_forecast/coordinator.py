@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.storage import Store
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
-from .api import IdokepApiClientCommunicationError, TimeUtils
+from .api import IdokepApiClientCommunicationError
 from .calculations import apparent_temperature
 from .const import (
     CURRENT,
@@ -21,13 +21,16 @@ from .const import (
     PRESSURE_MAP,
     UV_MAP,
 )
+from .failures import FailureLog
 from .storage import (
     SAVE_DELAY,
     STORAGE_VERSION,
     forecast_as_of,
-    restore,
+    restored_forecast,
+    running_hour,
     serialize,
     storage_key,
+    today_item,
 )
 
 if TYPE_CHECKING:
@@ -81,6 +84,11 @@ SOURCE_ENTITIES = {
 }
 
 
+# After a restart or reload every source that fails is retried every minute
+# until it first works
+STARTUP_RETRY_INTERVAL = timedelta(minutes=1)
+
+
 def next_ten_minutes(now: datetime) -> datetime:
     """Return the next x:00, x:10, x:20, x:30, x:40 or x:50 after now."""
     # Budapest's UTC offset is whole hours, so UTC boundaries match local ones
@@ -108,6 +116,8 @@ class SourceSchedule:
     retry_interval: timedelta
     # None means due immediately (nothing fetched yet)
     next_due: datetime | None = None
+    # False until the first successful fetch since the start
+    succeeded: bool = False
 
     def is_due(self, now: datetime) -> bool:
         """Return True if the source should be fetched at now."""
@@ -115,11 +125,17 @@ class SourceSchedule:
 
     def mark_success(self, now: datetime) -> None:
         """Schedule the next regular fetch."""
+        self.succeeded = True
         self.next_due = self.next_regular(now)
 
     def mark_failure(self, now: datetime) -> None:
-        """Schedule a retry."""
-        self.next_due = now + self.retry_interval
+        """
+        Schedule a retry: every minute while nothing has worked yet.
+
+        The regular fetch comes in any case, if it is earlier than the retry.
+        """
+        interval = self.retry_interval if self.succeeded else STARTUP_RETRY_INTERVAL
+        self.next_due = min(now + interval, self.next_regular(now))
 
 
 # https://developers.home-assistant.io/docs/integration_fetching_data#coordinated-single-api-poll-for-data-for-all-entities
@@ -136,6 +152,14 @@ class IdokepDataUpdateCoordinator(DataUpdateCoordinator):
       minute
     - pressure map (/legnyomas: pressure): every 10 minutes, retry every minute
     - UV map (/uv: UV index): every 10 minutes, retry every minute
+
+    After a restart or reload, a page that hasn't been fetched yet is retried
+    every minute, also the forecast. A page that fails has no data until it is
+    fetched again; its failure and its recovery are each logged once. The
+    exception is the forecast: while its page fails, the last downloaded one
+    (after a restart the saved one) is followed hour by hour, without alerts
+    and warnings. While the current page fails, the forecast's running hour
+    stands in for the weather entity's conditions and the storm now.
 
     There is no update_interval; async_tick is called every minute at second
     59 (the schedules count in whole minutes, so x:00:59 is x:00) and
@@ -168,22 +192,28 @@ class IdokepDataUpdateCoordinator(DataUpdateCoordinator):
             PRESSURE_MAP: SourceSchedule(next_ten_minutes, timedelta(minutes=1)),
             UV_MAP: SourceSchedule(next_ten_minutes, timedelta(minutes=1)),
         }
-        # Last successful result per source, kept while a source is failing
+        # Each source's last result; empty after a failure
         self._source_data: dict[str, dict[str, Any]] = {
             source: {} for source in self.schedules
         }
-        # When each source's data was fetched (saved along with it)
-        self._fetched: dict[str, datetime] = {}
-        # Saved copy of _source_data under .storage/ (set up by async_restore)
+        location = config_entry.data["location"]
+        self._failures = {
+            source: FailureLog(logger, f"Fetching {source} data for {location}")
+            for source in self.schedules
+        }
+        # The last downloaded forecast, saved under .storage/ (set up by
+        # async_restore), and whether the page has failed since
+        self._last_forecast: dict[str, Any] = {}
+        self._forecast_failed = False
         self._store: Store | None = None
 
     async def async_restore(self) -> None:
         """
-        Load the data saved before the last restart.
+        Load the forecast saved before the last restart.
 
-        Called before the first refresh, so the entry can start with the saved
-        data even if idokep.hu is unreachable. Only still valid data is used
-        (see storage.restore); pages are fetched on schedule as usual.
+        Called before the first refresh. It is shown while the forecast page
+        can't be downloaded, and the parser takes from it the parts a
+        downloaded page no longer has, the current hour and today (see storage).
         """
         self._store = Store(
             self.hass, STORAGE_VERSION, storage_key(self.config_entry.entry_id)
@@ -193,59 +223,19 @@ class IdokepDataUpdateCoordinator(DataUpdateCoordinator):
         if saved.get("location", location) != location:
             # Saved before the location was changed in the options
             self.logger.debug("Saved data is for %s, not used", saved["location"])
-            saved = {}
-        now = dt_util.utcnow()
-        for source, item in saved.get("sources", {}).items():
-            if source not in self._source_data:
-                continue
-            data = restore(source, item, now)
-            if not data:
-                continue
-            self._source_data[source] = data
-            self._fetched[source] = datetime.fromisoformat(item["fetched"])
-            self.logger.debug("Restored saved %s data", source)
+            return
 
-        # Let the parser keep today's daily entry (and so today's max/min)
-        # once the page drops today's column
+        self._last_forecast = restored_forecast(saved)
         client = self.config_entry.runtime_data.client
-        today_item = self._restored_today_item(dt_util.as_local(now).date())
-        if today_item is not None:
-            client.restore_today_forecast(today_item)
-        # Likewise the current hour, which the page no longer lists
-        if hourly := self._source_data[HOURLY].get("hourly_forecast"):
+        today = dt_util.as_local(dt_util.utcnow()).date()
+        if item := today_item(self._last_forecast, today):
+            client.restore_today_forecast(item)
+        if hourly := self._last_forecast["hourly_forecast"]:
             client.restore_hourly_forecast(hourly)
-
-    def _restored_today_item(self, today: date) -> dict[str, Any] | None:
-        """Return today's daily entry from the restored forecast page data."""
-        forecast = self._source_data[HOURLY]
-        for item in forecast.get("daily_forecast", []):
-            if str(item.get("datetime", ""))[:10] == today.isoformat():
-                return item
-        # Data saved by an earlier version only has today's max/min
-        if "temperature_max_today" in forecast or "temperature_min_today" in forecast:
-            return {
-                "datetime": TimeUtils.day_start(today),
-                "temperature": forecast.get("temperature_max_today"),
-                "templow": forecast.get("temperature_min_today"),
-                "condition": None,
-                "precipitation": 0,
-            }
-        return None
 
     def _data_to_save(self) -> dict[str, Any]:
         """Return the data to write to disk."""
-        return {
-            # Saved data is only restored for the same location
-            "location": self.config_entry.data["location"],
-            "sources": {
-                source: {
-                    "fetched": self._fetched[source].isoformat(),
-                    "data": serialize(self._source_data[source]),
-                }
-                for source in self._source_data
-                if source in self._fetched and self._source_data[source]
-            },
-        }
+        return serialize(self.config_entry.data["location"], self._last_forecast)
 
     def needed_sources(self) -> set[str]:
         """
@@ -308,7 +298,13 @@ class IdokepDataUpdateCoordinator(DataUpdateCoordinator):
         }
 
     async def _async_update_data(self) -> dict:
-        """Fetch the sources that are due and merge with the last good data."""
+        """
+        Fetch the sources that are due and merge them with the others.
+
+        A source that fails has no data until it is fetched again, so its
+        entities are unavailable. A failing forecast page is replaced by the
+        last forecast as it stands now.
+        """
         location = self.config_entry.data["location"]
         now = floor_to_minute(dt_util.utcnow())
         # The first refresh runs during setup, before any entity listens; it
@@ -326,47 +322,27 @@ class IdokepDataUpdateCoordinator(DataUpdateCoordinator):
         )
 
         for source, result in zip(due, results, strict=True):
-            schedule = self.schedules[source]
-            if isinstance(result, IdokepApiClientCommunicationError):
-                self.logger.info("Fetching %s data failed: %s", source, result)
-                schedule.mark_failure(now)
-            elif isinstance(result, BaseException):
-                self.logger.error(
-                    "Unexpected error parsing %s data",
-                    source,
-                    exc_info=result,
-                )
-                schedule.mark_failure(now)
-            elif REQUIRED_KEYS[source] not in result:
-                self.logger.warning("No %s data found for %s", source, location)
-                schedule.mark_failure(now)
-            else:
-                self._source_data[source] = result
-                self._fetched[source] = now
-                schedule.mark_success(now)
-                if self._store is not None:
-                    self._store.async_delay_save(self._data_to_save, SAVE_DELAY)
-
-        # A kept forecast moves on with time: the current hour's values from
-        # its item, passed hours dropped
-        if (
-            self._source_data[HOURLY]
-            and HOURLY in self._fetched
-            and self._fetched[HOURLY] != now
-        ):
-            self._source_data[HOURLY] = forecast_as_of(
-                self._source_data[HOURLY], self._fetched[HOURLY], now
-            )
+            self._take_result(source, result, now)
 
         # A page nobody reads anymore must not serve its old values (e.g. the
-        # weather entity's humidity); current conditions are kept as the base
-        for source in self.schedules.keys() - wanted - {CURRENT}:
+        # weather entity's humidity)
+        for source in self.schedules.keys() - wanted:
             self._source_data[source] = {}
-            self._fetched.pop(source, None)
+
+        # Applied at every update, so it moves on with the hours
+        if self._forecast_failed and HOURLY in wanted:
+            self._source_data[HOURLY] = forecast_as_of(self._last_forecast, now)
 
         data: dict[str, Any] = {}
         for source in self.schedules:
             data.update(self._source_data[source])
+        # Without the current page, the forecast's running hour stands in for
+        # the weather entity's conditions and for whether it's stormy now
+        if not self._source_data[CURRENT] and (
+            item := running_hour(self._source_data[HOURLY], now)
+        ):
+            data["forecast_now"] = item
+            data["storm_now"] = bool(item.get("storm"))
         # Recalculated at every update, from the pages' latest values
         speed = data.get("wind_speed")
         if speed is not None:
@@ -375,8 +351,37 @@ class IdokepDataUpdateCoordinator(DataUpdateCoordinator):
             )
             if feels_like is not None:
                 data["apparent_temperature"] = feels_like
-
-        if not data:
-            msg = f"No weather data found for location: {location}"
-            raise UpdateFailed(msg)
         return data
+
+    def _take_result(
+        self, source: str, result: dict[str, Any] | BaseException, now: datetime
+    ) -> None:
+        """Keep a source's fetched data and schedule its next fetch."""
+        schedule = self.schedules[source]
+        failures = self._failures[source]
+        succeeded = False
+        if isinstance(result, IdokepApiClientCommunicationError):
+            failures.failed(result)
+        elif isinstance(result, BaseException):
+            # Unexpected, e.g. a parser error: with the traceback
+            failures.failed(repr(result), exc_info=result)
+        elif REQUIRED_KEYS[source] not in result:
+            failures.failed(f"no {source} data on the page")
+        else:
+            succeeded = True
+
+        if source == HOURLY:
+            self._forecast_failed = not succeeded
+        if not succeeded:
+            # Nothing old is shown for a source that failed (for the forecast,
+            # see _async_update_data)
+            self._source_data[source] = {}
+            schedule.mark_failure(now)
+            return
+        failures.succeeded()
+        schedule.mark_success(now)
+        self._source_data[source] = result
+        if source == HOURLY:
+            self._last_forecast = result
+            if self._store is not None:
+                self._store.async_delay_save(self._data_to_save, SAVE_DELAY)

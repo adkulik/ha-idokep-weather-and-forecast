@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.weather import (
     ATTR_CONDITION_CLEAR_NIGHT,
@@ -12,7 +12,12 @@ from homeassistant.components.weather import (
     WeatherEntity,
 )
 from homeassistant.components.weather.const import WeatherEntityFeature
-from homeassistant.const import UnitOfPrecipitationDepth, UnitOfPressure, UnitOfSpeed
+from homeassistant.const import (
+    STATE_UNKNOWN,
+    UnitOfPrecipitationDepth,
+    UnitOfPressure,
+    UnitOfSpeed,
+)
 from homeassistant.core import callback
 from homeassistant.helpers import sun
 
@@ -34,7 +39,7 @@ _LOGGER = logging.getLogger(__name__)
 INTERNAL_FIELDS = frozenset({"storm", "wind_strength"})
 
 
-class IdokepWeatherEntity(IdokepEntity, WeatherEntity):
+class IdokepWeatherEntity(IdokepEntity, WeatherEntity):  # pylint: disable=too-many-public-methods
     """Idokep Weather entity."""
 
     # The only entity with an attribution
@@ -76,9 +81,31 @@ class IdokepWeatherEntity(IdokepEntity, WeatherEntity):
         )
 
     @property
+    def available(self) -> bool:
+        """
+        Return False without a condition: unavailable rather than unknown.
+
+        The condition is the entity's state.
+        """
+        return super().available and self._current("condition") not in (
+            None,
+            STATE_UNKNOWN,
+        )
+
+    def _current(self, key: str) -> Any:
+        """
+        Return a current condition from the current weather page.
+
+        While that page can't be downloaded, the value is the one of the
+        forecast's running hour.
+        """
+        data = self.coordinator.data
+        return data.get("forecast_now", data).get(key)
+
+    @property
     def condition(self) -> str | None:
         """Return the current weather condition."""
-        condition = self.coordinator.data.get("condition")
+        condition = self._current("condition")
         if condition == ATTR_CONDITION_SUNNY and not sun.is_up(self.hass):
             return ATTR_CONDITION_CLEAR_NIGHT
         return condition
@@ -86,7 +113,7 @@ class IdokepWeatherEntity(IdokepEntity, WeatherEntity):
     @property
     def native_temperature(self) -> float | None:
         """Return the current temperature in native units."""
-        temp = self.coordinator.data.get("temperature")
+        temp = self._current("temperature")
         return float(temp) if temp is not None else None
 
     @property
@@ -127,7 +154,7 @@ class IdokepWeatherEntity(IdokepEntity, WeatherEntity):
     @property
     def cloud_coverage(self) -> int | None:
         """Return the cloud coverage (%), estimated from the description."""
-        return self.coordinator.data.get("cloud_coverage")
+        return self._current("cloud_coverage")
 
     @property
     def native_dew_point(self) -> float | None:

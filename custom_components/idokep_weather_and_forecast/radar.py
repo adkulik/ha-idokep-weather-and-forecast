@@ -13,12 +13,11 @@ downloadable about a minute after each 5-minute mark, so it is checked at
 x:00:59, x:05:59, ... x:55:59; if no new frame is there yet (or the check
 fails), again every minute (x:01:59, x:02:59, ...) until one arrives. When a
 new frame appears, only that frame is downloaded and the older ones shift
-along; all six are downloaded only at start-up (a frame repeated there is
-kept once, so the animation can start with fewer frames).
+along; all six are downloaded only at start-up and after a failure (a frame
+repeated there is kept once, so the animation can start with fewer frames).
 
-The shift assumes exactly one frame was published since the last one. If
-frames were missed (e.g. idokep.hu unreachable for a while), the animation
-skips them until they move out of the six-frame window.
+After a failure there is no animation until a download works again, which is
+tried every minute.
 """
 
 from __future__ import annotations
@@ -32,11 +31,12 @@ from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING
 
 import aiohttp
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 from PIL import Image
 
 from .api import _BROWSER_HEADERS, IdokepApiClientCommunicationError
+from .failures import FailureLog
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -151,7 +151,7 @@ def _parse_http_date(value: str | None) -> datetime | None:
         return None
 
 
-class RadarCoordinator(DataUpdateCoordinator[RadarImage]):
+class RadarCoordinator(DataUpdateCoordinator[RadarImage | None]):
     """Keep the national radar animation up to date."""
 
     def __init__(
@@ -170,6 +170,7 @@ class RadarCoordinator(DataUpdateCoordinator[RadarImage]):
             config_entry=config_entry,
         )
         self._session = session
+        self._failures = FailureLog(logger, "Radar update")
         # Frames oldest first; the newest frame's Last-Modified value
         self._frames: deque[bytes] = deque(maxlen=FRAME_COUNT)
         self._last_modified: str | None = None
@@ -195,21 +196,30 @@ class RadarCoordinator(DataUpdateCoordinator[RadarImage]):
             return
         await self.async_refresh()
 
-    async def _async_update_data(self) -> RadarImage:
-        """Download what changed and rebuild the animation."""
+    async def _async_update_data(self) -> RadarImage | None:
+        """
+        Download what changed and rebuild the animation.
+
+        None after a failure: nothing old is shown, and the next try downloads
+        all frames again.
+        """
         try:
             await self._update_frames()
-        except IdokepApiClientCommunicationError as exception:
-            if self.data is not None:
-                # Keep showing the last animation; try again at the next check
-                self.logger.info("Radar update failed: %s", exception)
-                return self.data
-            raise UpdateFailed(exception) from exception
-
-        if self.data is not None and self.data.updated == self._newest_time():
-            return self.data
-        gif = await self.hass.async_add_executor_job(build_gif, list(self._frames))
-        return RadarImage(gif=gif, updated=self._newest_time())
+            image = self.data
+            if image is None or image.updated != self._newest_time():
+                gif = await self.hass.async_add_executor_job(
+                    build_gif, list(self._frames)
+                )
+                image = RadarImage(gif=gif, updated=self._newest_time())
+        # OSError and ValueError: a frame that isn't a readable picture
+        except (IdokepApiClientCommunicationError, OSError, ValueError) as exception:
+            self._failures.failed(exception)
+            self._frames.clear()
+            self._last_modified = None
+            self._got_frame_this_slot = False
+            return None
+        self._failures.succeeded()
+        return image
 
     async def _update_frames(self) -> None:
         """Fetch the newest frame if it changed and shift the others along."""
@@ -226,7 +236,7 @@ class RadarCoordinator(DataUpdateCoordinator[RadarImage]):
             # The previous newest frame is now radar1: just add the new one
             self._frames.append(newest.data)
         else:
-            # Start-up: get the older frames too (radar5 .. radar1)
+            # Start-up or after a failure: get the older frames too
             older = await asyncio.gather(
                 *(
                     fetch_frame(self._session, i)

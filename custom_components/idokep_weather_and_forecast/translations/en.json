@@ -14,7 +14,7 @@
                     "location": "The settlement name as it appears in idokep.hu URLs (e.g. Budapest).",
                     "station": "Codes of idokep.hu weather stations, as in their page addresses (e.g. jozsamet), in priority order.",
                     "merge_method": "Priority takes each value from the first listed station with a recent enough reading; Newest from the station with the most recent reading; Average takes the mean of the readings.",
-                    "max_age": "A station reading older than this many minutes (1-1440) is not used; if no station has a newer one, the sensor shows unknown."
+                    "max_age": "A station reading older than this many minutes (1-1440) is not used; if no station has a newer one, the sensor is unavailable."
                 }
             }
         },
@@ -282,7 +282,7 @@
                     "location": "The settlement name as it appears in idokep.hu URLs (e.g. Budapest).",
                     "station": "Codes of idokep.hu weather stations, as in their page addresses (e.g. jozsamet), in priority order. Clear them to remove the weather station device.",
                     "merge_method": "Priority takes each value from the first listed station with a recent enough reading; Newest from the station with the most recent reading; Average takes the mean of the readings.",
-                    "max_age": "A station reading older than this many minutes (1-1440) is not used; if no station has a newer one, the sensor shows unknown."
+                    "max_age": "A station reading older than this many minutes (1-1440) is not used; if no station has a newer one, the sensor is unavailable."
                 }
             }
         },

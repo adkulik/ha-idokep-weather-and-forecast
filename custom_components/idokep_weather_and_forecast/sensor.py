@@ -37,7 +37,7 @@ from .api import (
     highest_alert_level,
 )
 from .const import DOMAIN
-from .coordinator import HUMIDITY_MAP, PRESSURE_MAP, SOURCE_ENTITIES, UV_MAP
+from .coordinator import SOURCE_ENTITIES
 from .entity import IdokepEntity, IdokepStationEntity
 
 if TYPE_CHECKING:
@@ -77,12 +77,6 @@ COMPASS_POINTS = [
 
 # The alert sensors' attribute (a list of the types in force) by sensor key
 ALERT_ATTRIBUTES = {"alert_level": "alerts", "warning_level": "warnings"}
-# Sensors read from the station maps: unavailable if the settlement has no value
-MAP_SENSOR_KEYS = frozenset(
-    key
-    for source in (HUMIDITY_MAP, PRESSURE_MAP, UV_MAP)
-    for key in SOURCE_ENTITIES[source]
-)
 
 
 def alert_type_label(hass: HomeAssistant, sensor_key: str, alert_type: str) -> str:
@@ -231,8 +225,7 @@ ENTITY_DESCRIPTIONS = (
         suggested_display_precision=DISPLAY_PRECISION,
         device_class=SensorDeviceClass.TEMPERATURE,
     ),
-    # Calculated from the temperature, humidity and the mean of the estimated
-    # wind speed and gust
+    # Calculated from the temperature, humidity and the estimated wind speed
     SensorEntityDescription(
         key="apparent_temperature",
         translation_key="apparent_temperature",
@@ -490,13 +483,8 @@ class IdokepSensor(IdokepEntity, SensorEntity):
 
     @property
     def available(self) -> bool:
-        """Return False for a map sensor if the settlement has no value."""
-        if self.entity_description.key not in MAP_SENSOR_KEYS:
-            return super().available
-        return (
-            super().available
-            and self.coordinator.data.get(self.entity_description.key) is not None
-        )
+        """Return False without a value: unavailable rather than unknown."""
+        return super().available and self.native_value is not None
 
     @property
     def native_value(self) -> str | int | float | None:
@@ -514,7 +502,7 @@ class IdokepSensor(IdokepEntity, SensorEntity):
             return ATTR_CONDITION_CLEAR_NIGHT
         options = self.entity_description.options
         if options is not None and value not in options:
-            # e.g. "unknown" for an unmapped condition; HA shows it as Unknown
+            # e.g. "unknown" for an unmapped condition: unavailable
             return None
         return value
 
@@ -559,16 +547,17 @@ class IdokepStationSensor(IdokepStationEntity, SensorEntity):
 
     @property
     def available(self) -> bool:
-        """Return False if the station doesn't measure this (or isn't reached)."""
+        """
+        Return False without a value: unavailable rather than unknown.
+
+        No station is read or has ever measured this, or every reading is over
+        the age limit.
+        """
         return (
             super().available
             and self.coordinator.data is not None
-            and self._reported(self.coordinator.data)
+            and self.native_value is not None
         )
-
-    def _reported(self, data: StationData) -> bool:
-        """Return True if any of the stations reports this measurement."""
-        return self.entity_description.key in data.available
 
     def _sources(self, data: StationData) -> tuple[str, ...]:
         """Return the codes of the stations the value comes from."""
@@ -593,10 +582,6 @@ class IdokepStationCalculatedSensor(IdokepStationSensor):
 
     entity_description: IdokepCalculatedSensorEntityDescription
 
-    def _reported(self, data: StationData) -> bool:
-        """Return True if the stations report every input."""
-        return all(key in data.available for key in self.entity_description.inputs)
-
     def _sources(self, data: StationData) -> tuple[str, ...]:
         """Return the stations the inputs come from."""
         return tuple(
@@ -619,10 +604,6 @@ class IdokepStationCalculatedSensor(IdokepStationSensor):
 
 class IdokepStationMeasurementTimeSensor(IdokepStationSensor):
     """When the newest of the readings shown was taken."""
-
-    def _reported(self, data: StationData) -> bool:
-        """Return True once a station has a reading."""
-        return data.measured is not None
 
     def _sources(self, data: StationData) -> tuple[str, ...]:
         """Return every station any shown value comes from."""

@@ -93,6 +93,7 @@ class WeatherConditionMapper:
         "pára": "fog",
         "porvihar": "exceptional",
         "erős eső": "pouring",
+        "intenzív eső": "pouring",
         "jégeső": "hail",
         "havazás": "snowy",
         "intenzív havazás": "snowy",
@@ -100,6 +101,7 @@ class WeatherConditionMapper:
         "hófúvás": "snowy",
         "hófúvás havazással": "snowy",
         "hózápor": "snowy",
+        "hózivatar": "snowy",
         "havas eső": "snowy-rainy",
         "fagyott eső": "snowy-rainy",
         "ónos eső": "snowy-rainy",
@@ -121,9 +123,11 @@ class WeatherConditionMapper:
         "gyenge eső": 100,
         "eső": 100,
         "erős eső": 100,
+        "intenzív eső": 100,
         "eső viharos széllel": 100,
         "zápor": 75,
         "zivatar": 75,
+        "hózivatar": 75,
         "száraz zivatar": 75,
         "villámlás": 75,
         "jégeső": 75,
@@ -564,7 +568,8 @@ class HourlyForecastParser(WeatherParser):
 
     idokep.hu lists only the coming hours (at 12:51 the list starts at
     13:00). The current hour's entry seen on an earlier fetch is kept and
-    still reported first until the hour ends.
+    still reported first until the hour ends. Without it there are no
+    current wind and precipitation values.
     """
 
     def __init__(self) -> None:
@@ -676,13 +681,12 @@ class HourlyForecastParser(WeatherParser):
     def _current_hour_item(
         forecast: list[dict[str, Any]], now: dt.datetime
     ) -> dict[str, Any] | None:
-        """Return the forecast item whose one-hour slot contains now."""
+        """Return the item whose one-hour slot contains now (None if missing)."""
         for item in forecast:
             start = dt.datetime.fromisoformat(item["datetime"])
             if start <= now < start + dt.timedelta(hours=1):
                 return item
-        # Page may already start at the next hour; fall back to the first slot
-        return forecast[0]
+        return None
 
     def _parse_hourly_card(
         self,

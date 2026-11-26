@@ -18,7 +18,6 @@ import pytest
 from homeassistant import config_entries
 from homeassistant.components.image import ImageEntity
 from homeassistant.const import Platform
-from homeassistant.helpers.update_coordinator import UpdateFailed
 from homeassistant.util import dt as dt_util
 from PIL import Image
 
@@ -350,23 +349,72 @@ async def test_rewritten_same_picture_is_not_a_new_frame(
 
 
 @pytest.mark.asyncio
-async def test_failure_keeps_last_animation(
+async def test_failure_drops_the_animation(
     coordinator: RadarCoordinator, site: FakeSite
 ) -> None:
-    """When idokep.hu is down the last GIF stays."""
-    first = await update_at(coordinator, T0)
+    """Nothing old is shown; the recovery downloads all frames again."""
+    await update_at(coordinator, T0)
     site.down = True
-    assert await update_at(coordinator, T0 + timedelta(minutes=1)) is first
+    assert await update_at(coordinator, T0 + timedelta(minutes=1)) is None
+    assert not coordinator._frames
+
+    site.down = False
+    site.requests.clear()
+    image = await update_at(coordinator, T0 + timedelta(minutes=2))
+
+    assert sorted(site.requests) == [0, 1, 2, 3, 4, 5]
+    assert gif_frames(image.gif) == FRAME_COUNT
 
 
 @pytest.mark.asyncio
-async def test_failure_without_animation_fails_update(
+async def test_unreadable_frame_is_a_failure(
     coordinator: RadarCoordinator, site: FakeSite
 ) -> None:
-    """With nothing to show, the update fails (setup is retried later)."""
-    site.down = True
-    with pytest.raises(UpdateFailed):
+    """A file that isn't a picture leaves no animation and is fetched again."""
+    site.frames[0] = b"not a picture"
+
+    assert await update_at(coordinator, T0) is None
+    assert not coordinator._frames
+
+
+@pytest.mark.asyncio
+async def test_failure_and_recovery_are_each_logged_once(
+    coordinator: RadarCoordinator,
+    site: FakeSite,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """One warning when the radar starts failing, one when it works again."""
+    for down in (True, True, False, False):
+        site.down = down
         await update_at(coordinator, T0)
+
+    assert [(r.levelname, r.getMessage()) for r in caplog.records] == [
+        ("WARNING", "Radar update failed: down"),
+        ("WARNING", "Radar update works again"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_failed_start_is_retried_every_minute(
+    coordinator: RadarCoordinator, site: FakeSite
+) -> None:
+    """Without a first animation each minute is tried, until one works."""
+    coordinator.async_add_listener(lambda: None)
+    site.down = True
+    await update_at(coordinator, T0)
+    site.requests.clear()
+
+    with patch.object(dt_util, "utcnow", return_value=minute(1)):
+        await coordinator.async_tick(minute(1))  # 23:41:59
+        await coordinator.async_tick(minute(2))
+    assert site.requests == [0, 0]
+
+    site.down = False
+    with patch.object(dt_util, "utcnow", return_value=minute(3)):
+        await coordinator.async_tick(minute(3))
+        await coordinator.async_tick(minute(4))  # it worked: no more retries
+    assert coordinator.data is not None
+    assert len(site.requests) == 2 + FRAME_COUNT
 
 
 @pytest.mark.asyncio
@@ -577,7 +625,7 @@ async def test_radar_entry_setup_and_unload() -> None:
         assert await async_setup_entry(hass, entry) is True
 
     location_coordinator.assert_not_called()
-    radar.async_config_entry_first_refresh.assert_awaited_once()
+    radar.async_refresh.assert_awaited_once()
     hass.config_entries.async_forward_entry_setups.assert_awaited_once_with(
         entry, [Platform.IMAGE]
     )
@@ -695,17 +743,19 @@ async def test_image_setup_adds_the_radar_image(coordinator: RadarCoordinator) -
 
 @pytest.mark.asyncio
 async def test_image_follows_new_animations(coordinator: RadarCoordinator) -> None:
-    """No image before the first animation; a new one updates the time."""
+    """Unavailable without an animation; a new one updates the time."""
     coordinator.config_entry.entry_id = "radar_entry"
     coordinator.hass.config = Mock(language="en")
     client, translations = _patch_image_setup()
     with client, translations:
         entity = IdokepRadarImage(coordinator.hass, coordinator)
     assert await entity.async_image() is None
+    assert not entity.available
 
     await update_at(coordinator, T0)
     entity.async_write_ha_state = Mock()
     entity._handle_coordinator_update()
 
+    assert entity.available
     assert entity.image_last_updated == coordinator.data.updated
     entity.async_write_ha_state.assert_called_once()

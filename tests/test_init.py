@@ -65,7 +65,7 @@ class TestIdokepInit:
 
         # Mock coordinator
         mock_coordinator = AsyncMock()
-        mock_coordinator.async_config_entry_first_refresh = AsyncMock()
+        mock_coordinator.async_refresh = AsyncMock()
 
         # Mock API client
         mock_client = Mock()
@@ -110,15 +110,17 @@ class TestIdokepInit:
             # Assertions
             assert result is True
             mock_coordinator_class.assert_called_once()
-            mock_coordinator.async_config_entry_first_refresh.assert_called_once()
+            # Not a first refresh, which would fail the setup
+            mock_coordinator.async_refresh.assert_awaited_once()
+            mock_coordinator.async_config_entry_first_refresh.assert_not_called()
             # A location's setup creates the Radar entry when it is missing
             mock_hass.config_entries.flow.async_init.assert_called_once_with(
                 DOMAIN, context={"source": "import"}
             )
-            # Saved data is restored before the first fetch
+            # The saved forecast is read before the first fetch
             call_names = [c[0] for c in mock_coordinator.mock_calls]
             assert call_names.index("async_restore") < call_names.index(
-                "async_config_entry_first_refresh"
+                "async_refresh"
             )
             mock_hass.config_entries.async_forward_entry_setups.assert_called_once_with(
                 mock_entry, PLATFORMS
@@ -253,40 +255,6 @@ class TestIdokepInit:
         registry.async_update_device.assert_called_once_with(
             "device1", remove_config_entry_id="entry1"
         )
-
-    @pytest.mark.asyncio
-    async def test_async_setup_entry_coordinator_failure(self) -> None:
-        """Test setup failure when coordinator first refresh fails."""
-        # Mock dependencies
-        mock_hass = Mock(spec=HomeAssistant)
-        # No Radar entry yet; started flows are not run in this test
-        mock_hass.config_entries.async_entries = Mock(return_value=[])
-        mock_hass.async_create_task = Mock(side_effect=lambda coro: coro.close())
-        mock_entry = Mock(spec=ConfigEntry)
-        mock_entry.domain = DOMAIN
-        mock_entry.data = {"location": "Budapest"}
-
-        # Mock coordinator that fails
-        mock_coordinator = AsyncMock()
-        mock_coordinator.async_config_entry_first_refresh = AsyncMock(
-            side_effect=Exception("Coordinator failure")
-        )
-
-        with (
-            patch(
-                "custom_components.idokep_weather_and_forecast.IdokepDataUpdateCoordinator"
-            ) as mock_coordinator_class,
-            patch(
-                "custom_components.idokep_weather_and_forecast.async_get_clientsession"
-            ),
-            patch("custom_components.idokep_weather_and_forecast.IdokepApiClient"),
-            patch("custom_components.idokep_weather_and_forecast.IdokepData"),
-        ):
-            mock_coordinator_class.return_value = mock_coordinator
-
-            # Call the function and expect exception
-            with pytest.raises(Exception, match="Coordinator failure"):
-                await async_setup_entry(mock_hass, mock_entry)
 
     @pytest.mark.asyncio
     async def test_async_unload_entry_success(self) -> None:

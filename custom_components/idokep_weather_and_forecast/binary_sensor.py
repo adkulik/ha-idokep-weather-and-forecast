@@ -67,18 +67,24 @@ class IdokepBinarySensor(IdokepEntity, BinarySensorEntity):
         )
 
     @property
+    def available(self) -> bool:
+        """Return False without a value: unavailable rather than unknown."""
+        return super().available and self.is_on is not None
+
+    @property
     def is_on(self) -> bool | None:
         """
         Return true if it's stormy now, or in the current or next hour.
 
-        Now: the current weather (fetched every 10 minutes); the hours: the
-        hourly forecast at its last fetch. None if neither is known.
+        Now: the current weather (fetched every 10 minutes; while that
+        fails, the forecast's running hour); the hours: the hourly forecast.
+        On if either says so; off only if both are known, else None.
         """
         values = [
             self.coordinator.data.get(key) for key in ("storm_now", "storm_expected")
         ]
         if any(values):
             return True
-        if all(value is None for value in values):
+        if None in values:
             return None
         return False

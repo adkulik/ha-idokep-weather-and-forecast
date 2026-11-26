@@ -71,6 +71,11 @@ class IdokepRadarImage(CoordinatorEntity[RadarCoordinator], ImageEntity):
         )
         self._update_from_coordinator()
 
+    @property
+    def available(self) -> bool:
+        """Return False without an animation, e.g. after a failed download."""
+        return super().available and self.coordinator.data is not None
+
     @callback
     def _update_from_coordinator(self) -> None:
         """Take the animation's time from the coordinator."""

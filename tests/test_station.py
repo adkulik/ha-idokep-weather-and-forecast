@@ -9,20 +9,20 @@ import math
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 from pathlib import Path
-from logging import getLogger
+from logging import WARNING, getLogger
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import aiohttp
 import pytest
 from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.helpers.device_registry import DeviceEntryType
-from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from custom_components.idokep_weather_and_forecast import config_flow
 from custom_components.idokep_weather_and_forecast.api import (
     IdokepApiClientCommunicationError,
 )
 from custom_components.idokep_weather_and_forecast.const import DOMAIN
+from custom_components.idokep_weather_and_forecast.failures import FailureLog
 from custom_components.idokep_weather_and_forecast.sensor import (
     ENTITY_DESCRIPTIONS,
     STATION_CALCULATED_DESCRIPTIONS,
@@ -43,7 +43,6 @@ from custom_components.idokep_weather_and_forecast.station import (
     StationSeries,
     decode_station,
     fetch_station,
-    fresh_readings,
     Reading,
     StationReadings,
     latest_readings,
@@ -212,7 +211,7 @@ def test_latest_readings_age_limit(minutes_old: int, max_age: int, kept: bool) -
     station = latest_readings(decoded, "jozsamet", NOW, max_age)
 
     assert ("hom" in station.readings) is kept
-    assert station.available == {"hom"}  # still measured, so unknown if too old
+    assert station.available == {"hom"}  # still measured, even if too old
 
 
 @pytest.mark.parametrize(
@@ -275,7 +274,7 @@ def test_merge_priority() -> None:
 
     assert data.values == {"hom": 10.0, "rh": 80.0, "szelirany": 350.0, "uv": 3.0}
     assert data.sources == {"hom": ("a",), "rh": ("a",), "szelirany": ("a",), "uv": ("b",)}
-    assert data.available == {"hom", "rh", "szelirany", "uv"}
+    assert set(data.values) == {"hom", "rh", "szelirany", "uv"}
     assert data.measured == NOW - timedelta(minutes=2)  # newest reading used (uv)
 
 
@@ -334,7 +333,7 @@ def test_merge_average_keeps_hundredths() -> None:
 
 
 def test_merge_without_fresh_readings() -> None:
-    """Reported but too old everywhere: unknown (None), still available."""
+    """Reported but too old everywhere: no value (None)."""
     stale = StationReadings("a", {}, frozenset({"hom"}), NOW - timedelta(hours=3))
 
     data = merge_readings([stale], "priority")
@@ -343,7 +342,6 @@ def test_merge_without_fresh_readings() -> None:
     # An empty dict, not just a falsy value
     # pylint: disable-next=use-implicit-booleaness-not-comparison
     assert data.sources == {}
-    assert data.available == {"hom"}
     assert data.measured == NOW - timedelta(hours=3)
 
 
@@ -356,7 +354,6 @@ def _coordinator() -> StationCoordinator:
     coordinator._listeners = {"x": Mock()}
     coordinator.last_update_success = True
     coordinator.async_refresh = AsyncMock()
-    coordinator._kept = {}
     coordinator.retrying = False
     return coordinator
 
@@ -401,7 +398,10 @@ def _fetching(coordinator: StationCoordinator, files: dict[str, object]) -> obje
     coordinator.codes = list(files)
     coordinator.method = "priority"
     coordinator.max_age = 60
-    coordinator.logger = Mock()
+    coordinator._failures = {
+        code: FailureLog(getLogger(__name__), f"Reading weather station {code}")
+        for code in files
+    }
 
     async def fetch(_session: object, code: str) -> object:
         result = files[code]
@@ -415,15 +415,15 @@ def _fetching(coordinator: StationCoordinator, files: dict[str, object]) -> obje
 
 
 @pytest.mark.asyncio
-async def test_update_failure_raises_update_failed() -> None:
-    """If no station can be read, the sensors become unavailable (UpdateFailed)."""
+async def test_update_without_any_station_has_no_values() -> None:
+    """If no station can be read there is nothing to show; it is retried."""
     coordinator = _coordinator()
     down = IdokepApiClientCommunicationError("down")
-    with (
-        _fetching(coordinator, {"jozsamet": down, "olig13": StationDataError("x")}),
-        pytest.raises(UpdateFailed),
-    ):
-        await coordinator._async_update_data()
+    with _fetching(coordinator, {"jozsamet": down, "olig13": StationDataError("x")}):
+        data = await coordinator._async_update_data()
+
+    assert data == StationData()
+    assert coordinator.retrying is True
 
 
 @pytest.mark.asyncio
@@ -494,7 +494,7 @@ def _station_mock(data: StationData | None) -> Mock:
 
 def test_station_sensor_device_and_value() -> None:
     """The sensor belongs to the "<entry> Weather" device and shows the value."""
-    data = StationData(values={"hom": 12.9}, available=frozenset({"hom"}))
+    data = StationData(values={"hom": 12.9})
     description = next(d for d in STATION_DESCRIPTIONS if d.key == "hom")
     sensor = IdokepStationSensor(_station_mock(data), description)
 
@@ -516,7 +516,6 @@ def test_station_sensor_names_its_stations() -> None:
     data = StationData(
         values={"hom": 11.0, "rh": 80.0},
         sources={"hom": ("jozsamet", "olig13"), "rh": ("olig13",)},
-        available=frozenset({"hom", "rh"}),
         measured=NOW,
     )
     hom = next(d for d in STATION_DESCRIPTIONS if d.key == "hom")
@@ -527,13 +526,13 @@ def test_station_sensor_names_its_stations() -> None:
 
     assert sensor.extra_state_attributes == {"stations": ["jozsamet", "olig13"]}
     assert time_sensor.extra_state_attributes == {"stations": ["jozsamet", "olig13"]}
-    no_value = StationData(available=frozenset({"hom"}), values={"hom": None})
+    no_value = StationData(values={"hom": None})
     assert IdokepStationSensor(_station_mock(no_value), hom).extra_state_attributes is None
 
 
 def test_station_sensor_unavailable_if_not_measured() -> None:
     """A series the station doesn't report is unavailable."""
-    data = StationData(values={"hom": 12.9}, available=frozenset({"hom"}))
+    data = StationData(values={"hom": 12.9})
     description = next(d for d in STATION_DESCRIPTIONS if d.key == "uv")
     assert not IdokepStationSensor(_station_mock(data), description).available
     assert not IdokepStationSensor(_station_mock(None), description).available
@@ -662,7 +661,7 @@ async def test_station_validation_names_the_bad_code() -> None:
 def test_station_measurement_time_sensor() -> None:
     """Measurement time: the newest reading's time, as a timestamp sensor."""
     measured = NOW - timedelta(minutes=2)
-    data = StationData(values={}, available=frozenset(), measured=measured)
+    data = StationData(values={}, measured=measured)
     sensor = IdokepStationMeasurementTimeSensor(
         _station_mock(data), STATION_MEASUREMENT_TIME_DESCRIPTION
     )
@@ -671,7 +670,7 @@ def test_station_measurement_time_sensor() -> None:
     assert sensor.device_class == SensorDeviceClass.TIMESTAMP
     assert sensor.available
     assert sensor.native_value == measured
-    no_reading = StationData(values={}, available=frozenset(), measured=None)
+    no_reading = StationData(values={}, measured=None)
     assert not IdokepStationMeasurementTimeSensor(
         _station_mock(no_reading), STATION_MEASUREMENT_TIME_DESCRIPTION
     ).available
@@ -704,7 +703,6 @@ def test_station_calculated_sensors(
             "rh": ("jozsamet", "olig13"),
             "szelero": ("olig13",),
         },
-        available=frozenset({"hom", "rh", "szelero"}),
         measured=NOW,
     )
     sensor = IdokepStationCalculatedSensor(_station_mock(data), _calculated(key))
@@ -718,24 +716,20 @@ def test_station_calculated_sensors(
 
 
 def test_station_calculated_sensor_needs_every_input() -> None:
-    """Unavailable if an input isn't measured; unknown without a fresh reading."""
-    no_wind = StationData(
-        values={"hom": 20.0, "rh": 50.0}, available=frozenset({"hom", "rh"})
-    )
+    """Unavailable if an input isn't measured or has no fresh reading."""
+    no_wind = StationData(values={"hom": 20.0, "rh": 50.0})
     apparent = _calculated("apparent_temperature")
     assert not IdokepStationCalculatedSensor(_station_mock(no_wind), apparent).available
     assert IdokepStationCalculatedSensor(
         _station_mock(no_wind), _calculated("dew_point")
     ).available
 
-    stale = StationData(
-        values={"hom": 20.0, "rh": None}, available=frozenset({"hom", "rh"})
-    )
-    sensor = IdokepStationCalculatedSensor(
+    stale = StationData(values={"hom": 20.0, "rh": None})
+    assert not IdokepStationCalculatedSensor(
         _station_mock(stale), _calculated("dew_point")
-    )
-    assert sensor.available
-    assert sensor.native_value is None
+    ).available
+    humidity = next(d for d in STATION_DESCRIPTIONS if d.key == "rh")
+    assert not IdokepStationSensor(_station_mock(stale), humidity).available
 
 
 # ---- download and coordinator setup ---------------------------------------------
@@ -793,14 +787,18 @@ def test_coordinator_setup(mock_hass: Mock) -> None:
 
 
 @pytest.mark.asyncio
-async def test_update_reraises_unexpected_errors() -> None:
-    """A bug (not a network or data error) is not hidden as a skipped station."""
+async def test_unexpected_error_leaves_the_station_out(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A bug is logged with its traceback and costs only that station."""
     coordinator = _coordinator()
-    with (
-        _fetching(coordinator, {"jozsamet": RuntimeError("bug")}),
-        pytest.raises(RuntimeError),
-    ):
-        await coordinator._async_update_data()
+    with _fetching(coordinator, {"jozsamet": RuntimeError("bug")}):
+        data = await coordinator._async_update_data()
+
+    assert data == StationData()
+    [record] = caplog.records
+    assert record.levelno == WARNING
+    assert record.exc_info
 
 
 def test_station_sensor_without_data_has_no_attributes() -> None:
@@ -809,51 +807,34 @@ def test_station_sensor_without_data_has_no_attributes() -> None:
     assert IdokepStationSensor(_station_mock(None), hom).extra_state_attributes is None
 
 
-# ---- keeping the readings -------------------------------------------------------
-
-
-def _utcnow(now: datetime = NOW) -> object:
-    return patch(
-        "custom_components.idokep_weather_and_forecast.station.dt_util.utcnow",
-        return_value=now,
-    )
-
-
-def test_fresh_readings_drops_those_over_the_age_limit() -> None:
-    """Kept readings count only within the age limit, like fetched ones."""
-    station = StationReadings(
-        "jozsamet",
-        {
-            "hom": Reading(7.5, NOW - timedelta(minutes=50), "jozsamet"),
-            "rh": Reading(80.0, NOW - timedelta(minutes=70), "jozsamet"),
-        },
-        frozenset({"hom", "rh"}),
-        NOW - timedelta(minutes=50),
-    )
-    fresh = fresh_readings(station, NOW, 60)
-    assert list(fresh.readings) == ["hom"]
-    assert fresh.available == {"hom", "rh"}
-    assert fresh.last == station.last
+# ---- failures --------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_failed_station_keeps_its_last_readings() -> None:
-    """A station that can't be read shows its last readings, within the age limit."""
+async def test_failed_station_has_no_values_and_is_logged_once(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Earlier readings aren't shown; one warning each for failure and recovery."""
     coordinator = _coordinator()
     now = int(NOW.timestamp())
-    good = StationSeries(times=[now - 60], series={"hom": [7.5], "rh": [80.0]})
-    with _fetching(coordinator, {"jozsamet": good}), _utcnow():
-        await coordinator._async_update_data()
-    assert coordinator.retrying is False
-
+    good = StationSeries(times=[now - 60], series={"hom": [7.5]})
     down = IdokepApiClientCommunicationError("down")
-    with _fetching(coordinator, {"jozsamet": down}), _utcnow(NOW + timedelta(minutes=30)):
-        data = await coordinator._async_update_data()
-    assert data.values == {"hom": 7.5, "rh": 80.0}
-    assert coordinator.retrying is True
+    files: dict[str, object] = {"jozsamet": good}
+    values = []
+    with (
+        _fetching(coordinator, files),
+        patch(
+            "custom_components.idokep_weather_and_forecast.station.dt_util.utcnow",
+            return_value=NOW,
+        ),
+    ):
+        for result in (good, down, down, good, good):
+            files["jozsamet"] = result
+            values.append((await coordinator._async_update_data()).values)
 
-    # Over the age limit the values go, but the sensors stay
-    with _fetching(coordinator, {"jozsamet": down}), _utcnow(NOW + timedelta(minutes=90)):
-        data = await coordinator._async_update_data()
-    assert data.values == {"hom": None, "rh": None}
-    assert data.available == {"hom", "rh"}
+    assert values == [{"hom": 7.5}, {}, {}, {"hom": 7.5}, {"hom": 7.5}]
+    assert coordinator.retrying is False
+    assert [r.getMessage() for r in caplog.records] == [
+        "Reading weather station jozsamet failed: down",
+        "Reading weather station jozsamet works again",
+    ]

@@ -14,7 +14,7 @@
                     "location": "A település neve úgy, ahogy az idokep.hu címében szerepel (pl. Budapest).",
                     "station": "Idokep.hu automaták kódjai, ahogy a címükben szerepelnek (pl. jozsamet), fontossági sorrendben.",
                     "merge_method": "A Prioritás minden értéket az első olyan állomástól vesz, amelynek van elég friss mérése; a Legfrissebb attól, amelynek a legutolsó a mérése; az Átlag a mérések átlagát veszi.",
-                    "max_age": "Az ennél több percnél régebbi állomásmérést nem használja (1-1440); ha egyik állomásnak sincs újabb mérése, a szenzor ismeretlen állapotú."
+                    "max_age": "Az ennél több percnél régebbi állomásmérést nem használja (1-1440); ha egyik állomásnak sincs újabb mérése, a szenzor nem elérhető."
                 }
             }
         },
@@ -282,7 +282,7 @@
                     "location": "A település neve úgy, ahogy az idokep.hu címében szerepel (pl. Budapest).",
                     "station": "Idokep.hu automaták kódjai, ahogy a címükben szerepelnek (pl. jozsamet), fontossági sorrendben. Törölve az időjárás-állomás eszköz megszűnik.",
                     "merge_method": "A Prioritás minden értéket az első olyan állomástól vesz, amelynek van elég friss mérése; a Legfrissebb attól, amelynek a legutolsó a mérése; az Átlag a mérések átlagát veszi.",
-                    "max_age": "Az ennél több percnél régebbi állomásmérést nem használja (1-1440); ha egyik állomásnak sincs újabb mérése, a szenzor ismeretlen állapotú."
+                    "max_age": "Az ennél több percnél régebbi állomásmérést nem használja (1-1440); ha egyik állomásnak sincs újabb mérése, a szenzor nem elérhető."
                 }
             }
         },

@@ -91,13 +91,13 @@ class TestIdokepBinarySensor:
         ("data", "expected"),
         [
             ({"storm_expected": True}, True),
-            ({"storm_expected": False}, False),
+            ({"storm_expected": False}, None),  # the other page is missing
             ({"storm_now": True}, True),
-            ({"storm_now": False}, False),
+            ({"storm_now": False}, None),
             ({"storm_now": True, "storm_expected": False}, True),
             ({"storm_now": False, "storm_expected": True}, True),
             ({"storm_now": False, "storm_expected": False}, False),
-            ({}, None),  # neither page is read yet: unknown
+            ({}, None),  # neither page is read
         ],
     )
     def test_storm_shows_the_value_of_the_last_fetch(
@@ -107,3 +107,4 @@ class TestIdokepBinarySensor:
         mock_coordinator.data = data
         sensor = IdokepBinarySensor(mock_coordinator, ENTITY_DESCRIPTIONS[0])
         assert sensor.is_on is expected
+        assert sensor.available is (expected is not None)

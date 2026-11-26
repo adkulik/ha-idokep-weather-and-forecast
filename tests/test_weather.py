@@ -365,3 +365,34 @@ def test_attribution_only_on_weather_entity(mock_coordinator: Mock) -> None:
     )
     for cls in (IdokepEntity, IdokepStationEntity, IdokepRadarImage):
         assert "_attr_attribution" not in vars(cls), cls.__name__
+
+
+@pytest.mark.parametrize(
+    ("data", "available"),
+    [
+        ({"condition": "sunny"}, True),
+        ({"condition": "unknown"}, False),
+        ({"temperature": 20}, False),
+    ],
+)
+def test_unavailable_without_a_known_condition(
+    mock_coordinator: Mock, data: dict, available: bool
+) -> None:
+    """The condition is the state: without one the entity is unavailable."""
+    mock_coordinator.data = data
+    assert IdokepWeatherEntity(mock_coordinator).available is available
+
+
+def test_running_forecast_hour_stands_in(mock_coordinator: Mock) -> None:
+    """With "forecast_now" the current conditions come from that hour."""
+    mock_coordinator.data = {
+        "forecast_now": {"condition": "rainy", "temperature": 7, "cloud_coverage": 100},
+        "wind_speed": 12,
+    }
+    entity = IdokepWeatherEntity(mock_coordinator)
+
+    assert entity.available
+    assert entity.condition == "rainy"
+    assert entity.native_temperature == 7.0
+    assert entity.cloud_coverage == 100
+    assert entity.native_wind_speed == 12

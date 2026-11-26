@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import quote
 
 import aiohttp
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 from .api import (
@@ -47,6 +47,7 @@ from .const import (
     MIN_MAX_AGE,
     STATION,
 )
+from .failures import FailureLog
 
 if TYPE_CHECKING:
     from logging import Logger
@@ -170,8 +171,6 @@ class StationData:
     values: dict[str, float | None] = field(default_factory=dict)
     # Series key -> codes of the stations the value comes from
     sources: dict[str, tuple[str, ...]] = field(default_factory=dict)
-    # Series keys any of the stations reports at all
-    available: frozenset[str] = frozenset()
     # Time of the newest reading used
     measured: datetime | None = None
 
@@ -288,19 +287,6 @@ def latest_readings(
     return StationReadings(code, readings, frozenset(available), last)
 
 
-def fresh_readings(
-    station: StationReadings, now: datetime, max_age: int
-) -> StationReadings:
-    """Return a station's kept readings without those now over max_age minutes."""
-    oldest = now - timedelta(minutes=max_age)
-    return StationReadings(
-        station.code,
-        {key: r for key, r in station.readings.items() if r.time >= oldest},
-        station.available,
-        station.last,
-    )
-
-
 # Merged values are rounded to 2 decimals
 DECIMALS = 2
 
@@ -322,11 +308,11 @@ def merge_readings(stations: list[StationReadings], method: str) -> StationData:
     reading; newest: the station with the most recent fresh reading (on a tie
     the first listed); average: the mean of all fresh readings.
     """
-    available = frozenset().union(*(station.available for station in stations))
+    reported = frozenset().union(*(station.available for station in stations))
     values: dict[str, float | None] = {}
     sources: dict[str, tuple[str, ...]] = {}
     used: list[Reading] = []
-    for key in available:
+    for key in reported:
         candidates = [s.readings[key] for s in stations if key in s.readings]
         if not candidates:
             values[key] = None
@@ -346,7 +332,6 @@ def merge_readings(stations: list[StationReadings], method: str) -> StationData:
     return StationData(
         values=values,
         sources=sources,
-        available=available,
         measured=max(times, default=None),
     )
 
@@ -397,8 +382,10 @@ class StationCoordinator(DataUpdateCoordinator[StationData]):
         self.codes = codes
         self.method = method
         self.max_age = max_age
-        # Each station's last good readings, used while it can't be read
-        self._kept: dict[str, StationReadings] = {}
+        self._failures = {
+            code: FailureLog(logger, f"Reading weather station {code}")
+            for code in codes
+        }
         # True while a station failed: it is retried every minute
         self.retrying = False
 
@@ -424,9 +411,8 @@ class StationCoordinator(DataUpdateCoordinator[StationData]):
         """
         Download every station's file and merge their readings.
 
-        A station that fails is represented by its last good readings (which
-        still count only within the age limit), or else left out; the update
-        fails only if no station has any readings.
+        A station that fails is left out; with every station failing there are
+        no values, so the sensors are unavailable.
         """
         results = await asyncio.gather(
             *(fetch_station(self._session, code) for code in self.codes),
@@ -434,19 +420,19 @@ class StationCoordinator(DataUpdateCoordinator[StationData]):
         )
         now = dt_util.utcnow()
         stations: list[StationReadings] = []
-        errors: list[IdokepApiClientError] = []
+        failed = False
         for code, result in zip(self.codes, results, strict=True):
             if isinstance(result, IdokepApiClientError):
-                self.logger.info("Weather station %s not read: %s", code, result)
-                errors.append(result)
-                if code in self._kept:
-                    stations.append(fresh_readings(self._kept[code], now, self.max_age))
+                self._failures[code].failed(result)
+                failed = True
+            elif isinstance(result, Exception):
+                # Unexpected, e.g. a decoder error: with the traceback
+                self._failures[code].failed(repr(result), exc_info=result)
+                failed = True
             elif isinstance(result, BaseException):
                 raise result
             else:
-                self._kept[code] = latest_readings(result, code, now, self.max_age)
-                stations.append(self._kept[code])
-        self.retrying = bool(errors)
-        if not stations:
-            raise UpdateFailed(errors[0])
+                self._failures[code].succeeded()
+                stations.append(latest_readings(result, code, now, self.max_age))
+        self.retrying = failed
         return merge_readings(stations, self.method)

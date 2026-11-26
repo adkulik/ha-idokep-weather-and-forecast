@@ -1,20 +1,14 @@
 """
-Saving the last good data of each idokep.hu page to disk.
+The last downloaded forecast: saved to disk and followed while downloads fail.
 
-The coordinator keeps one file per config entry under .storage/ (Home
-Assistant's Store helper). After a restart the saved data is restored:
+The coordinator saves the forecast page's last successfully downloaded forecast
+in one file per config entry under .storage/ (Home Assistant's Store helper).
+It is used in two ways:
 
-- forecasts: hours and days that have not passed yet
-- today's max/min: only if saved today
-- alerts and warnings: however old, until a successful fetch replaces them
-- the current wind, precipitation and storm value: if fetched in the hour
-  now running, else from the forecast's item for that hour
-- everything else (current conditions, humidity, pressure, UV): however
-  old, so the sensors never start without a value; the next successful fetch
-  replaces it
-
-The coordinator also applies the forecast rules (forecast_as_of) to the kept
-forecast while the page can't be downloaded, so the current hour moves on.
+- while the page can't be downloaded, also after a restart, the forecast shown
+  is the last one, followed hour by hour (forecast_as_of)
+- the page no longer lists the hour now running, and in the evening it no
+  longer shows today: the parser adds both to a successful download
 """
 
 from __future__ import annotations
@@ -25,31 +19,24 @@ from typing import Any
 from homeassistant.util import dt as dt_util
 
 from .api import (
-    ALERT_LEVELS,
-    ALERT_TYPES,
-    CURRENT_HOUR_KEYS,
     HourlyForecastParser,
     TimeUtils,
     WindStrengthMapper,
     current_hour_values,
 )
-from .const import (
-    CURRENT,
-    DOMAIN,
-    HOURLY,
-    HUMIDITY_MAP,
-    PRESSURE_MAP,
-    UV_MAP,
-)
+from .const import DOMAIN, HOURLY
 
 STORAGE_VERSION = 1
-# The forecast page's values for the hour now running
-CURRENT_KEYS = (*(key for _, key in CURRENT_HOUR_KEYS), "storm_expected")
-# Delay before writing, so several page fetches end in one write
+# Delay before writing
 SAVE_DELAY = 10
 
-# Values whose validity is a calendar day rather than an age
-TODAY_KEYS = ("temperature_max_today", "temperature_min_today")
+# The forecast page's data that is saved
+SAVED_KEYS = ("hourly_forecast", "daily_forecast")
+# Today's max/min: (data key, daily item key)
+TODAY_KEYS = (
+    ("temperature_max_today", "temperature"),
+    ("temperature_min_today", "templow"),
+)
 
 
 def storage_key(entry_id: str) -> str:
@@ -62,109 +49,125 @@ def station_storage_key(entry_id: str) -> str:
     return f"{DOMAIN}.{entry_id}.station"
 
 
-def serialize(data: dict[str, Any]) -> dict[str, Any]:
-    """Return page data in a JSON-safe form (a copy: it's all plain data)."""
-    return dict(data)
+def serialize(location: str, forecast: dict[str, Any]) -> dict[str, Any]:
+    """Return what to save of a downloaded forecast page (all plain data)."""
+    data = {key: forecast[key] for key in SAVED_KEYS if key in forecast}
+    # Saved data is only restored for the same location
+    return {"location": location, "sources": {HOURLY: {"data": data}}}
 
 
-def restore(source: str, saved: dict[str, Any], now: datetime) -> dict[str, Any]:
+def restored_forecast(saved: dict[str, Any]) -> dict[str, Any]:
     """
-    Return the still valid part of a page's saved data.
+    Return the saved hourly and daily forecast in the current form.
 
-    saved is {"fetched": ISO time, "data": page data}; now is an aware
-    datetime. An empty result means nothing worth restoring.
+    Empty lists if the file has none or can't be read.
     """
-    try:
-        fetched = datetime.fromisoformat(saved["fetched"])
-        data = dict(saved["data"])
-    except (KeyError, TypeError, ValueError):
-        return {}
-    restorer = _RESTORERS.get(source)
-    if restorer is None:
-        return {}
-    return restorer(data, fetched, now)
+    return {
+        "hourly_forecast": [
+            _with_wind_estimates(item)
+            for item in _saved_items(saved, "hourly_forecast")
+        ],
+        "daily_forecast": [
+            daily
+            for item in _saved_items(saved, "daily_forecast")
+            if (daily := _daily_item(item)) is not None
+        ],
+    }
 
 
-def _restore_current(
-    data: dict[str, Any], _fetched: datetime, _now: datetime
-) -> dict[str, Any]:
-    """Restore current conditions and map values, however old."""
-    return data
-
-
-def forecast_as_of(
-    data: dict[str, Any], fetched: datetime, now: datetime
-) -> dict[str, Any]:
-    """
-    Return the forecast page's data fetched at fetched as it stands at now.
-
-    Used both on restore and while the page can't be downloaded. Hours not
-    yet over, days from today on, today's max/min if fetched today, alerts
-    and warnings however old. The current wind, precipitation and
-    storm value are kept within the hour they were fetched in, after that
-    taken from the item of the hour now running.
-    """
-    result: dict[str, Any] = {}
-    today = dt_util.as_local(now).date()
-
-    if hourly := _hours_not_over(data.get("hourly_forecast", []), now):
-        result["hourly_forecast"] = [_with_wind_estimates(item) for item in hourly]
-    if daily := _days_from(data.get("daily_forecast", []), today):
-        result["daily_forecast"] = daily
-
-    for key in ("alerts", "warnings"):
-        if key in data:
-            result[key] = _valid_alerts(data[key])
-    if "warning_level" in data:
-        result["warning_level"] = data["warning_level"]
-    if dt_util.as_local(fetched).date() == today:
-        result.update({key: data[key] for key in TODAY_KEYS if key in data})
-
-    if _hour_start(fetched) == _hour_start(now):
-        for key in CURRENT_KEYS:
-            if key in data:
-                result[key] = data[key]
-        strength = result.get("wind_strength")
-        if strength in WindStrengthMapper.SPEEDS:
-            result["wind_speed"] = WindStrengthMapper.SPEEDS[strength]
-            result["wind_gust_speed"] = WindStrengthMapper.GUSTS[strength]
-    elif hourly := result.get("hourly_forecast"):
-        # Fetched for an earlier hour, but the hour now running is still in
-        # the forecast: take them from its item, as a fetch would
-        result.update(current_hour_values(_item_of_hour(hourly, now)))
-        result["storm_expected"] = HourlyForecastParser.storm_expected(hourly, now)
-
-    return result
-
-
-def _hour_start(moment: datetime) -> datetime:
-    """Return the start of moment's hour (in UTC: Budapest's offset is whole hours)."""
-    return dt_util.as_utc(moment).replace(minute=0, second=0, microsecond=0)
-
-
-def _item_of_hour(items: list[dict], now: datetime) -> dict | None:
-    """Return the hourly item whose hour contains now (None if it is missing)."""
-    for item in items:
-        start = datetime.fromisoformat(item["datetime"])
-        if start <= now < start + timedelta(hours=1):
+def today_item(forecast: dict[str, Any], today: date) -> dict[str, Any] | None:
+    """Return the forecast's daily entry of today, if there is one."""
+    for item in forecast.get("daily_forecast", []):
+        if _day(item) == today:
             return item
     return None
 
 
-def _valid_alerts(items: list[Any]) -> list[dict[str, str]]:
-    """
-    Return the saved alerts in the current form.
+def running_hour(forecast: dict[str, Any], now: datetime) -> dict[str, Any] | None:
+    """Return the forecast's hourly item whose hour contains now, if there is one."""
+    for item in forecast.get("hourly_forecast", []):
+        start = _start(item)
+        if start is not None and start <= now < start + timedelta(hours=1):
+            return item
+    return None
 
-    Extra fields saved by older versions are left out, and alerts of
-    unknown types (older versions' type names) are dropped.
+
+def forecast_as_of(forecast: dict[str, Any], now: datetime) -> dict[str, Any]:
     """
-    return [
-        {"type": item["type"], "level": item["level"]}
-        for item in items
-        if isinstance(item, dict)
-        and item.get("type") in ALERT_TYPES
-        and item.get("level") in ALERT_LEVELS[1:]
+    Return what a downloaded forecast says at now (an aware datetime).
+
+    The hours from the one now running, the days from today, today's max/min,
+    and the current wind, precipitation and storm value from the running hour.
+    Alerts and warnings are not part of it. Empty if the forecast doesn't have
+    the hour now running.
+    """
+    hours = [
+        (start, item)
+        for item in forecast.get("hourly_forecast", [])
+        if (start := _start(item)) is not None and start + timedelta(hours=1) > now
     ]
+    if not hours or hours[0][0] > now:
+        return {}
+    hourly = [item for _, item in hours]
+
+    today = dt_util.as_local(now).date()
+    result: dict[str, Any] = {
+        "hourly_forecast": hourly,
+        **current_hour_values(hourly[0]),
+        "storm_expected": HourlyForecastParser.storm_expected(hourly, now),
+    }
+    daily = [
+        item
+        for item in forecast.get("daily_forecast", [])
+        if (day := _day(item)) is not None and day >= today
+    ]
+    if daily:
+        result["daily_forecast"] = daily
+    if (item := today_item(forecast, today)) is not None:
+        for key, value_key in TODAY_KEYS:
+            if item.get(value_key) is not None:
+                result[key] = item[value_key]
+    return result
+
+
+def _start(item: dict[str, Any]) -> datetime | None:
+    """Return an hourly item's start (None without a readable aware time)."""
+    try:
+        start = datetime.fromisoformat(item["datetime"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return start if start.tzinfo is not None else None
+
+
+def _day(item: dict[str, Any]) -> date | None:
+    """Return a daily item's date (None without a readable one)."""
+    try:
+        return date.fromisoformat(str(item["datetime"])[:10])
+    except (KeyError, ValueError):
+        return None
+
+
+def _daily_item(item: dict[str, Any]) -> dict[str, Any] | None:
+    """
+    Return a saved daily entry in the current form (None without a date).
+
+    Earlier versions saved a date-only datetime and a precipitation
+    probability (the page shows none per day): the date becomes local
+    midnight, the probability goes.
+    """
+    if (day := _day(item)) is None:
+        return None
+    kept = {k: v for k, v in item.items() if k != "precipitation_probability"}
+    return {**kept, "datetime": TimeUtils.day_start(day)}
+
+
+def _saved_items(saved: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    """Return a list of the saved forecast (empty if missing or unreadable)."""
+    try:
+        items = saved["sources"][HOURLY]["data"][key]
+        return [item for item in items if isinstance(item, dict)]
+    except (KeyError, TypeError):
+        return []
 
 
 def _with_wind_estimates(item: dict[str, Any]) -> dict[str, Any]:
@@ -182,45 +185,3 @@ def _with_wind_estimates(item: dict[str, Any]) -> dict[str, Any]:
         "native_wind_speed": WindStrengthMapper.SPEEDS[strength],
         "native_wind_gust_speed": WindStrengthMapper.GUSTS[strength],
     }
-
-
-def _hours_not_over(items: list[dict], now: datetime) -> list[dict]:
-    """Return the hourly items whose hour has not ended yet."""
-    result = []
-    for item in items:
-        try:
-            start = datetime.fromisoformat(item["datetime"])
-        except (KeyError, TypeError, ValueError):
-            continue
-        if start.tzinfo is not None and start + timedelta(hours=1) > now:
-            result.append(item)
-    return result
-
-
-def _days_from(items: list[dict], today: date) -> list[dict]:
-    """
-    Return the daily items dated today or later.
-
-    Earlier versions saved a date-only datetime and a precipitation
-    probability (the page shows none per day): the date becomes local
-    midnight, the probability goes.
-    """
-    result = []
-    for item in items:
-        try:
-            day = date.fromisoformat(str(item["datetime"])[:10])
-        except (KeyError, TypeError, ValueError):
-            continue
-        if day >= today:
-            kept = {k: v for k, v in item.items() if k != "precipitation_probability"}
-            result.append({**kept, "datetime": TimeUtils.day_start(day)})
-    return result
-
-
-_RESTORERS = {
-    CURRENT: _restore_current,
-    HUMIDITY_MAP: _restore_current,
-    PRESSURE_MAP: _restore_current,
-    UV_MAP: _restore_current,
-    HOURLY: forecast_as_of,
-}

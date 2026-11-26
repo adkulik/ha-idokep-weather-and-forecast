@@ -17,8 +17,8 @@ MERGE_PRIORITY = "priority"  # the first listed station with a fresh reading
 MERGE_NEWEST = "newest"  # the station with the most recent fresh reading
 MERGE_AVERAGE = "average"  # the mean of the fresh readings
 MERGE_METHODS = [MERGE_PRIORITY, MERGE_NEWEST, MERGE_AVERAGE]
-# A station reading older than this many minutes is reported as unknown; the
-# station files cover about 24 hours, so a longer limit would change nothing
+# A station reading older than this many minutes is not used; the station files
+# cover about 24 hours, so a longer limit would change nothing
 MAX_AGE = "max_age"
 DEFAULT_MAX_AGE = 60
 MIN_MAX_AGE = 1
