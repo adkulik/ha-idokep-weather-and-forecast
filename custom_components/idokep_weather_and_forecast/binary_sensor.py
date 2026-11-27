@@ -35,9 +35,11 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the binary_sensor platform."""
+    if (coordinator := entry.runtime_data.coordinator) is None:
+        return  # no forecast
     async_add_entities(
         IdokepBinarySensor(
-            coordinator=entry.runtime_data.coordinator,
+            coordinator=coordinator,
             entity_description=entity_description,
         )
         for entity_description in ENTITY_DESCRIPTIONS
@@ -46,11 +48,6 @@ async def async_setup_entry(
 
 class IdokepBinarySensor(IdokepEntity, BinarySensorEntity):
     """idokep binary_sensor class."""
-
-    @property
-    def has_entity_name(self) -> bool:
-        """Return True if the entity has a name."""
-        return True
 
     def __init__(
         self,

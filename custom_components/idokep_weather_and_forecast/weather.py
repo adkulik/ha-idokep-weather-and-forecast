@@ -60,11 +60,6 @@ class IdokepWeatherEntity(IdokepEntity, WeatherEntity):  # pylint: disable=too-m
             "configuration_url": forecast_page_url(self.coordinator.config_entry),
         }
 
-    @property
-    def has_entity_name(self) -> bool:
-        """Return True if the entity has a name."""
-        return True
-
     def __init__(self, coordinator: IdokepDataUpdateCoordinator) -> None:
         """Initialize the IdokepWeatherEntity with the given coordinator."""
         # Current conditions; forecast page for hourly/daily forecast and wind.
@@ -75,7 +70,7 @@ class IdokepWeatherEntity(IdokepEntity, WeatherEntity):  # pylint: disable=too-m
         # doesn't contain the settlement, so it stays when the settlement is
         # changed in Configure.
         self._attr_name = None
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_weather"
+        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_forecast"
         self._attr_supported_features = (
             WeatherEntityFeature.FORECAST_DAILY | WeatherEntityFeature.FORECAST_HOURLY
         )
@@ -223,5 +218,5 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the weather entity."""
-    weather_entity = IdokepWeatherEntity(entry.runtime_data.coordinator)
-    async_add_entities([weather_entity])
+    if (coordinator := entry.runtime_data.coordinator) is not None:
+        async_add_entities([IdokepWeatherEntity(coordinator)])

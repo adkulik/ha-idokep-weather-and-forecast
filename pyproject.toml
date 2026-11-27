@@ -14,8 +14,8 @@ filterwarnings = [
 source = ["custom_components"]
 
 [tool.coverage.report]
-# Fail the test run if new code isn't covered by tests.
-fail_under = 99
+# Every statement must be run by a test, so every module is at 100% too.
+fail_under = 100
 
 [tool.pylint.format]
 max-line-length = 100

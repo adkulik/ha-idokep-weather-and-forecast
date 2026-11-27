@@ -102,6 +102,8 @@ def test_device_named_after_entry(mock_coordinator: Mock) -> None:
         assert "name" not in device
         assert device["translation_key"] == "forecast"
         assert device["translation_placeholders"] == {"name": "Budapest"}
+        # A service, whichever entity registers it first
+        assert device["entry_type"] == "service"
     assert sensor.device_info["identifiers"] == weather.device_info["identifiers"]
 
 

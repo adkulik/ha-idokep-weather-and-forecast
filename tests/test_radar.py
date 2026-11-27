@@ -23,14 +23,16 @@ from PIL import Image
 
 from custom_components.idokep_weather_and_forecast import (
     RADAR_PLATFORMS,
-    _ensure_radar_entry,
     async_setup_entry,
     async_unload_entry,
 )
 from custom_components.idokep_weather_and_forecast.api import (
     IdokepApiClientCommunicationError,
 )
-from custom_components.idokep_weather_and_forecast.config_flow import IdokepFlowHandler
+from custom_components.idokep_weather_and_forecast.config_flow import (
+    IdokepFlowHandler,
+    _async_add_radar,
+)
 from custom_components.idokep_weather_and_forecast.const import (
     DOMAIN,
     ENTRY_TYPE,
@@ -39,17 +41,17 @@ from custom_components.idokep_weather_and_forecast.const import (
     RADAR_UNIQUE_ID,
 )
 from custom_components.idokep_weather_and_forecast import image as image_platform
-from custom_components.idokep_weather_and_forecast.image import (
-    IdokepRadarImage,
-    radar_entity_name,
+from custom_components.idokep_weather_and_forecast.image import IdokepRadarImage
+from custom_components.idokep_weather_and_forecast.coordinator import (
+    RadarCoordinator,
+    _parse_http_date,
 )
 from custom_components.idokep_weather_and_forecast.radar import (
     FRAME_COUNT,
     LAST_FRAME_MS,
+    NEWEST_INDEX,
     Frame,
-    RadarCoordinator,
     RadarImage,
-    _parse_http_date,
     _unsqueeze,
     build_gif,
     fetch_frame,
@@ -182,7 +184,7 @@ class FakeSite:
     async def fetch(
         self, _session: object, index: int, ims: str | None = None
     ) -> Frame | None:
-        """Stand-in for radar.fetch_frame."""
+        """Stand-in for fetch_frame."""
         self.requests.append(index)
         if self.down:
             msg = "down"
@@ -231,7 +233,7 @@ def gif_frames(gif: bytes) -> int:
 def fake_fetch(site: FakeSite):
     """Route frame downloads to the fake site."""
     with patch(
-        "custom_components.idokep_weather_and_forecast.radar.fetch_frame", site.fetch
+        "custom_components.idokep_weather_and_forecast.coordinator.fetch_frame", site.fetch
     ):
         yield
 
@@ -531,18 +533,13 @@ async def test_image_entity(coordinator: RadarCoordinator) -> None:
     coordinator.hass.config = Mock(language="en")
     await update_at(coordinator, T0)
     # ImageEntity asks Home Assistant for its shared web client
-    with (
-        patch(IMAGE_CLIENT),
-        patch(
-            "custom_components.idokep_weather_and_forecast.image.translation"
-            ".async_get_cached_translations",
-            return_value={},
-        ),
-    ):
+    with patch(IMAGE_CLIENT):
         entity = IdokepRadarImage(coordinator.hass, coordinator)
 
-    # Without a translation: English
-    assert entity.name == "National radar image"
+    # The device's main entity: named just like the device
+    assert entity.has_entity_name is True
+    assert entity.name is None
+    assert entity.translation_key == "national_radar"
     assert entity.content_type == "image/gif"
     assert entity.unique_id == "radar_entry_national_radar"
     # The device's name comes from the "device" translations
@@ -556,40 +553,21 @@ async def test_image_entity(coordinator: RadarCoordinator) -> None:
 
 
 @pytest.mark.parametrize(
-    ("language", "entity_name", "device_name"),
-    [
-        ("en", "National radar image", "National Radar Image"),
-        ("hu", "Országos radarkép", "Országos Radarkép"),
-    ],
+    ("language", "name"),
+    [("en", "National Radar Image"), ("hu", "Országos Radarkép")],
 )
-def test_radar_names_are_translated(
-    language: str, entity_name: str, device_name: str
-) -> None:
-    """The translation files name the image and its device in both languages."""
+def test_radar_name_is_translated(language: str, name: str) -> None:
+    """The translation files name the radar device in both languages."""
     strings = json.loads(
         (COMPONENT_DIR / "translations" / f"{language}.json").read_text(
             encoding="utf-8"
         )
     )
-    assert strings["entity"]["image"]["national_radar"]["name"] == entity_name
-    assert strings["device"]["national_radar"]["name"] == device_name
-
-    flat = {
-        f"component.{DOMAIN}.entity.image.national_radar.name": entity_name,
-    }
-    hass = Mock()
-    hass.config.language = language
-    with patch(
-        "custom_components.idokep_weather_and_forecast.image.translation"
-        ".async_get_cached_translations",
-        return_value=flat,
-    ) as get:
-        assert radar_entity_name(hass) == entity_name
-    get.assert_called_once_with(hass, language, "entity", DOMAIN)
+    assert strings["device"]["national_radar"]["name"] == name
 
 
 # ---------------------------------------------------------------------------
-# Config flow: the Radar entry is created automatically
+# Config flow: the import step
 # ---------------------------------------------------------------------------
 
 
@@ -655,7 +633,7 @@ async def test_radar_entry_setup_and_unload() -> None:
 
 
 # ---------------------------------------------------------------------------
-# The Radar entry is (re)created when a location entry starts
+# The setup form adds the Radar entry; no entry's setup does
 # ---------------------------------------------------------------------------
 
 
@@ -668,9 +646,9 @@ def hass_with_entries(entries: list[Mock]) -> Mock:
 
 
 def test_radar_entry_created_when_missing() -> None:
-    """A location's startup (add, reload, restart) creates a missing Radar."""
+    """A missing Radar entry is created through the import flow."""
     hass = hass_with_entries([Mock(unique_id="budapest")])
-    _ensure_radar_entry(hass)
+    _async_add_radar(hass)
     hass.config_entries.async_entries.assert_called_once_with(DOMAIN)
     hass.config_entries.flow.async_init.assert_called_once_with(
         DOMAIN, context={"source": config_entries.SOURCE_IMPORT}
@@ -680,13 +658,13 @@ def test_radar_entry_created_when_missing() -> None:
 def test_radar_entry_not_duplicated() -> None:
     """An existing Radar entry (also disabled or ignored) is left alone."""
     hass = hass_with_entries([Mock(unique_id=RADAR_UNIQUE_ID)])
-    _ensure_radar_entry(hass)
+    _async_add_radar(hass)
     hass.config_entries.flow.async_init.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_radar_entry_setup_does_not_create_itself() -> None:
-    """Only location entries check for the Radar entry."""
+    """Starting an entry adds no Radar entry."""
     hass = hass_with_entries([])
     hass.config_entries.async_forward_entry_setups = AsyncMock()
     entry = Mock()
@@ -728,18 +706,6 @@ def test_parse_http_date(value: str | None, expected: datetime | None) -> None:
     assert _parse_http_date(value) == expected
 
 
-def _patch_image_setup() -> tuple[object, object]:
-    """Patch the web client and translations the image needs."""
-    return (
-        patch(IMAGE_CLIENT),
-        patch(
-            "custom_components.idokep_weather_and_forecast.image.translation"
-            ".async_get_cached_translations",
-            return_value={},
-        ),
-    )
-
-
 @pytest.mark.asyncio
 async def test_image_setup_adds_the_radar_image(coordinator: RadarCoordinator) -> None:
     """The Radar entry gets exactly one image entity."""
@@ -748,8 +714,7 @@ async def test_image_setup_adds_the_radar_image(coordinator: RadarCoordinator) -
     entry = Mock()
     entry.runtime_data.coordinator = coordinator
     add = Mock()
-    client, translations = _patch_image_setup()
-    with client, translations:
+    with patch(IMAGE_CLIENT):
         await image_platform.async_setup_entry(coordinator.hass, entry, add)
 
     (entities,) = add.call_args[0]
@@ -762,8 +727,7 @@ async def test_image_follows_new_animations(coordinator: RadarCoordinator) -> No
     """Unavailable without an animation; a new one updates the time."""
     coordinator.config_entry.entry_id = "radar_entry"
     coordinator.hass.config = Mock(language="en")
-    client, translations = _patch_image_setup()
-    with client, translations:
+    with patch(IMAGE_CLIENT):
         entity = IdokepRadarImage(coordinator.hass, coordinator)
     assert await entity.async_image() is None
     assert not entity.available
@@ -775,3 +739,17 @@ async def test_image_follows_new_animations(coordinator: RadarCoordinator) -> No
     assert entity.available
     assert entity.image_last_updated == coordinator.data.updated
     entity.async_write_ha_state.assert_called_once()
+
+
+async def test_connection_check_downloads_the_newest_frame(
+    coordinator: RadarCoordinator, site: FakeSite
+) -> None:
+    """One frame tells whether the radar can be downloaded."""
+    with patch(
+        "custom_components.idokep_weather_and_forecast.coordinator.fetch_frame",
+        AsyncMock(side_effect=IdokepApiClientCommunicationError("down")),
+    ) as fetch:
+        with pytest.raises(IdokepApiClientCommunicationError):
+            await coordinator.async_check_connection()
+
+    fetch.assert_awaited_once_with(coordinator._session, NEWEST_INDEX)

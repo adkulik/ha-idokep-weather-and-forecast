@@ -4,14 +4,16 @@
             "user": {
                 "data": {
                     "name": "Név",
-                    "location": "Település",
+                    "location": "Település (nem kötelező)",
                     "station": "Időjárás-állomások kódjai (nem kötelező)",
                     "merge_method": "Összevonás módja",
-                    "max_age": "Mérés maximális kora"
+                    "max_age": "Mérés maximális kora",
+                    "add_radar": "Országos radar"
                 },
                 "data_description": {
-                    "name": "A bejegyzés és eszközei neve (pl. Otthon).",
-                    "location": "A település neve úgy, ahogy az idokep.hu címében szerepel (pl. Budapest).",
+                    "name": "A bejegyzés és szolgáltatásai neve (pl. Otthon).",
+                    "location": "A település neve úgy, ahogy az idokep.hu címében szerepel (pl. Budapest). Üresen hagyva nincs előrejelzés.",
+                    "add_radar": "Hozzáadja az országos radarképet. Ha csak a radart szeretnéd, hagyd üresen a nevet, a települést és az állomáskódokat.",
                     "station": "Idokep.hu automaták kódjai, ahogy a címükben szerepelnek (pl. jozsamet), fontossági sorrendben.",
                     "merge_method": "A Prioritás minden értéket az első olyan állomástól vesz, amelynek van elég friss mérése; a Legfrissebb attól, amelynek a legutolsó a mérése; az Átlag a mérések átlagát veszi.",
                     "max_age": "Az ennél több percnél régebbi állomásmérést nem használja (1-1440); ha egyik állomásnak sincs újabb mérése, a szenzor nem elérhető."
@@ -20,13 +22,17 @@
         },
         "error": {
             "connection": "Nem sikerült időjárási adatot lekérni ehhez a településhez. Ellenőrizd a nevet és a kapcsolatot.",
+            "unknown_location": "Az idokep.hu nem ismer ilyen nevű települést. Úgy írd, ahogy az oldala címében szerepel (pl. Debrecen-Józsa).",
             "unknown": "Ismeretlen hiba történt.",
             "station": "Ehhez a kódhoz nincs automata adat: {code}. Ellenőrizd a kódot az idokep.hu/automata oldalon.",
             "station_connection": "Az idokep.hu nem érhető el ehhez a kódhoz: {code}. Ellenőrizd a kapcsolatot.",
-            "name": "Adj meg egy nevet."
+            "name": "Adj meg egy nevet.",
+            "nothing": "Adj meg egy települést vagy egy állomáskódot.",
+            "nothing_or_radar": "Adj meg egy települést vagy egy állomáskódot. Ha csak a radart szeretnéd, a nevet is hagyd üresen, az Országos radar pedig maradjon bejelölve."
         },
         "abort": {
-            "already_configured": "Ez a bejegyzés már konfigurálva van."
+            "already_configured": "Ez a bejegyzés már konfigurálva van.",
+            "already_in_progress": "Ennek a bejegyzésnek a hozzáadása már folyamatban van. Fejezd be azt, mielőtt újrakezded."
         }
     },
     "device": {
@@ -259,11 +265,11 @@
             "storm_expected_1h": {
                 "name": "Vihar várható egy órán belül"
             }
-        },
-        "image": {
-            "national_radar": {
-                "name": "Országos radarkép"
-            }
+        }
+    },
+    "exceptions": {
+        "unknown_location": {
+            "message": "Az idokep.hu nem ismer „{location}” nevű települést, ezért egy másik település időjárását mutatná. Javítsd a nevet a Beállítás (Configure) gombbal."
         }
     },
     "options": {
@@ -272,15 +278,15 @@
                 "title": "Beállítások",
                 "data": {
                     "name": "Név",
-                    "location": "Település",
+                    "location": "Település (nem kötelező)",
                     "station": "Időjárás-állomások kódjai (nem kötelező)",
                     "merge_method": "Összevonás módja",
                     "max_age": "Mérés maximális kora"
                 },
                 "data_description": {
-                    "name": "A bejegyzés neve; az eszközök neve is módosul, ha tartalmazza.",
-                    "location": "A település neve úgy, ahogy az idokep.hu címében szerepel (pl. Budapest).",
-                    "station": "Idokep.hu automaták kódjai, ahogy a címükben szerepelnek (pl. jozsamet), fontossági sorrendben. Törölve az időjárás-állomás eszköz megszűnik.",
+                    "name": "A bejegyzés neve; a szolgáltatások neve is módosul, ha tartalmazza.",
+                    "location": "A település neve úgy, ahogy az idokep.hu címében szerepel (pl. Budapest). Törölve az előrejelzés szolgáltatás megszűnik.",
+                    "station": "Idokep.hu automaták kódjai, ahogy a címükben szerepelnek (pl. jozsamet), fontossági sorrendben. Törölve az időjárás-állomás szolgáltatás megszűnik.",
                     "merge_method": "A Prioritás minden értéket az első olyan állomástól vesz, amelynek van elég friss mérése; a Legfrissebb attól, amelynek a legutolsó a mérése; az Átlag a mérések átlagát veszi.",
                     "max_age": "Az ennél több percnél régebbi állomásmérést nem használja (1-1440); ha egyik állomásnak sincs újabb mérése, a szenzor nem elérhető."
                 }
@@ -290,8 +296,11 @@
             "station": "Ehhez a kódhoz nincs automata adat: {code}. Ellenőrizd a kódot az idokep.hu/automata oldalon.",
             "station_connection": "Az idokep.hu nem érhető el ehhez a kódhoz: {code}. Ellenőrizd a kapcsolatot.",
             "connection": "Nem sikerült időjárási adatot lekérni ehhez a településhez. Ellenőrizd a nevet és a kapcsolatot.",
+            "unknown_location": "Az idokep.hu nem ismer ilyen nevű települést. Úgy írd, ahogy az oldala címében szerepel (pl. Debrecen-Józsa).",
             "unknown": "Ismeretlen hiba történt.",
             "already_configured": "Ez a település már egy másik bejegyzésben be van állítva.",
+            "stations_configured": "Egy másik, település nélküli bejegyzésben már ezek az állomások szerepelnek.",
+            "nothing": "Adj meg egy települést vagy egy állomáskódot.",
             "name": "Adj meg egy nevet."
         }
     },

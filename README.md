@@ -3,7 +3,9 @@
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
 [![GitHub Release](https://img.shields.io/github/v/release/ztarsoly/ha-idokep-weather-and-forecast)](https://github.com/ztarsoly/ha-idokep-weather-and-forecast/releases)
 
-Egyéni (custom) Home Assistant integráció, amely az [idokep.hu](https://www.idokep.hu) adatait hozza be: aktuális időjárást, óránkénti és napi előrejelzést, időjárási riasztásokat, egy vagy több választható időjárás-állomás (automata) mért adatait és az országos radarképet.
+Az [Időkép](https://www.idokep.hu) magyar időjárási szolgáltatás: weboldalán a települések aktuális időjárása és előrejelzése, időjárási riasztások, radarképek és időjárás-állomások mérései érhetők el.
+
+Ez az egyéni (custom) Home Assistant integráció az idokep.hu adatait hozza be: aktuális időjárást, óránkénti és napi előrejelzést, időjárási riasztásokat, egy vagy több választható időjárás-állomás (automata) mért adatait és az országos radarképet.
 
 Az integráció az idokep.hu nyilvános oldalait olvassa (nincs hivatalos API, felhasználói fiók sem kell). Ha az idokep.hu megváltoztatja az oldalait, az integrációt is frissíteni kell.
 
@@ -12,8 +14,9 @@ Az integráció az idokep.hu nyilvános oldalait olvassa (nincs hivatalos API, f
 - **Időjárás entitás** óránkénti és napi (kb. 23 napos) előrejelzéssel, a Home Assistant új forecast API-jával
 - **Előrejelzési szenzorok**: hőmérséklet, állapot, mai maximum/minimum, szélirány, szélerősség, becsült szélsebesség és széllökés, csapadék, csapadék valószínűsége, valamint a település állomásainak átlagából páratartalom, harmatpont, légnyomás és UV-index, és ezekből számított hőérzet
 - **Riasztások**: riasztás 3 órán belül, figyelmeztetés mára (nincs, sárga, narancs, piros; típusonként is) és vihar egy órán belül
-- **Időjárás-állomások** (nem kötelező): egy vagy több idokep.hu automata 12 mért adata egy eszközben összevonva, belőlük számított értékek (harmatpont, hőérzet, nedves hőmérséklet, abszolút páratartalom, páranyomás, páranyomás-hiány, felhőalap) és a mérés ideje
-- **Országos radar**: animált GIF az utolsó 6 radarképből, külön szolgáltatásként
+- **Időjárás-állomások** (nem kötelező): egy vagy több idokep.hu automata 12 mért adata egy szolgáltatásban összevonva, belőlük számított értékek (harmatpont, hőérzet, nedves hőmérséklet, abszolút páratartalom, páranyomás, páranyomás-hiány, felhőalap) és a mérés ideje
+- **Országos radar** (nem kötelező): animált GIF az utolsó 6 radarképből, külön szolgáltatásként
+- Az előrejelzés, az állomások és a radar közül csak azt kell felvenni, amire szükséged van
 - Magyar és angol fordítás, a Home Assistant nyelvének megfelelően
 - Csak a szükséges oldalakat tölti le, és a hibás letöltést újrapróbálja; régi adatot nem mutat, kivéve az előrejelzést, amíg az nem tölthető le (újraindítás után is)
 
@@ -22,13 +25,15 @@ Az integráció az idokep.hu nyilvános oldalait olvassa (nincs hivatalos API, f
 - Home Assistant 2026.7 vagy újabb
 - Internetkapcsolat a `www.idokep.hu` eléréséhez
 
-A szükséges Python-csomagot (beautifulsoup4) a Home Assistant telepíti.
+Külön Python-csomag nem szükséges.
 
-## Eszközök és entitások
+## Szolgáltatások és entitások
 
-Minden felvett bejegyzéshez (településhez) az alábbiak jönnek létre. A `<Név>` a beállításkor megadott név. Az eszközök neve a Home Assistant nyelvét követi (angolul `<Név> Forecast`, `<Név> Weather`).
+Egy bejegyzéshez a megadott településhez az **előrejelzés**, a megadott állomáskódokhoz az **időjárás** szolgáltatás jön létre; bármelyik elhagyható, de legalább az egyik kell. A `<Név>` a beállításkor megadott név. A szolgáltatások neve a Home Assistant nyelvét követi (angolul `<Név> Forecast`, `<Név> Weather`).
 
-### `<Név> Előrejelzés` – Weather forecast
+### `<Név> Előrejelzés` – Weather forecast (csak településsel)
+
+Település nélküli bejegyzésben nincs sem ez a szolgáltatás, sem az entitásai (az időjárás entitás és a vihar szenzor sem), és az előrejelzés oldalai nem töltődnek le.
 
 | Entitás | Típus | Megjegyzés |
 |---|---|---|
@@ -77,7 +82,7 @@ A Felhőzet szenzor és az időjárás entitás felhőzete (`cloud_coverage`) **
 
 ### `<Név> Időjárás` – Current weather (csak állomáskóddal)
 
-Egy vagy több idokep.hu időjárás-állomás (automata) mért adatai, egy eszközben. Több állomásnál minden érték a választott **összevonás módja** szerint áll össze:
+Egy vagy több idokep.hu időjárás-állomás (automata) mért adatai, egy szolgáltatásban. Több állomásnál minden érték a választott **összevonás módja** szerint áll össze:
 
 - **Prioritás**: az első olyan állomás értéke a listában, amelynek van elég friss mérése; a következő állomás pótolja, amit az előző nem mér, vagy ha épp nem érhető el.
 - **Legfrissebb**: annak az állomásnak az értéke, amelynek a legutolsó az elég friss mérése (egyenlőségnél a listában előbbié).
@@ -110,7 +115,7 @@ Minden szenzor `stations` attribútuma mutatja, melyik állomás(ok)tól szárma
 
 ### `Országos Radarkép` (National Radar Image) – Radar szolgáltatás
 
-Az első bejegyzés felvételekor automatikusan létrejön egy **Radar** bejegyzés egy kép entitással (**Országos radarkép**, angolul National radar image). Ez az országos radar utolsó 6 képéből készült animált GIF (képenként 1 mp, az utolsón 2 mp). Ha törlöd, a következő újraindításkor vagy újratöltéskor újra létrejön; ha nem kell, inkább kapcsold ki. Ha a letöltés nem sikerül, a kép nem elérhető, amíg egy letöltés újra nem sikerül; ekkor mind a 6 képet újra letölti.
+Amíg nincs **Radar** bejegyzés, a beállítás űrlapján megjelenik az **Országos radar** jelölőnégyzet (alapból bejelölve); bejelölve létrejön egy **Radar** bejegyzés egy kép entitással (**Országos radarkép**, angolul National radar image). Ez az országos radar utolsó 6 képéből készült animált GIF (képenként 1 mp, az utolsón 2 mp). Ha törlöd, magától nem jön létre újra, a jelölőnégyzet viszont ismét megjelenik. Később úgy veheted fel, hogy új bejegyzést adsz hozzá, és a nevet, a települést és az állomáskódokat üresen hagyod. A kikapcsolt Radar bejegyzés is meglévőnek számít (nincs jelölőnégyzet); ha kell, kapcsold be. Ha a letöltés nem sikerül, a kép nem elérhető, amíg egy letöltés újra nem sikerül; ekkor mind a 6 képet újra letölti.
 
 ## Telepítés
 
@@ -135,26 +140,41 @@ Frissítéshez töröld a `custom_components/idokep_weather_and_forecast` mappá
 
 | Mező | Kötelező | Leírás |
 |---|---|---|
-| Név | igen | A bejegyzés és az eszközök neve (pl. Otthon → „Otthon Előrejelzés”, „Otthon Időjárás”) |
-| Település | igen | A település neve úgy, ahogy az idokep.hu címében szerepel, pl. `Budapest` vagy `Debrecen-Józsa` (`https://www.idokep.hu/idojaras/Debrecen-Józsa`) |
-| Időjárás-állomások kódjai | nem | Egy vagy több idokep.hu automata kódja fontossági sorrendben, pl. `jozsamet` (`https://www.idokep.hu/automata/jozsamet`) |
+| Név | igen* | A bejegyzés és a szolgáltatások neve (pl. Otthon → „Otthon Előrejelzés”, „Otthon Időjárás”) |
+| Település | nem* | Üresen hagyva nincs előrejelzés. A település neve úgy, ahogy az idokep.hu címében szerepel, pl. `Budapest` vagy `Debrecen-Józsa` (`https://www.idokep.hu/idojaras/Debrecen-Józsa`); az ismeretlen nevet az integráció nem fogadja el. A kis- és nagybetű nem számít, és a név az idokep.hu írásmódjával mentődik (pl. `pecs` → `Pécs`); ékezet nélkül beírva az oldal nem minden települést ismer fel |
+| Időjárás-állomások kódjai | nem* | Egy vagy több idokep.hu automata kódja fontossági sorrendben, pl. `jozsamet` (`https://www.idokep.hu/automata/jozsamet`) |
 | Összevonás módja | nem | Prioritás (alapértelmezett), Legfrissebb vagy Átlag – lásd fent |
 | Mérés maximális kora | nem | Az ennél régebbi állomásmérés nem számít, percben (1–1440, alapból 60) |
+| Országos radar | nem | Jelölőnégyzet, csak akkor látszik, ha még nincs **Radar** bejegyzés; alapból bejelölve, és ekkor felveszi |
+
+\* A névhez a település vagy legalább egy állomáskód is kell. Ha csak a radart szeretnéd, hagyd üresen a nevet, a települést és az állomáskódokat, és a jelölőnégyzet maradjon bejelölve.
 
 Az állomáskódot az [idokep.hu/automata](https://www.idokep.hu/automata) oldalon találod: válaszd ki az állomást a listából, a kód a címben a `/automata/` utáni rész (a listában zárójelben is látszik).
 
-Egy település csak egyszer vehető fel. Több települést külön bejegyzésként adhatsz hozzá.
+Egy település csak egyszer vehető fel. Több települést külön bejegyzésként adhatsz hozzá. Település nélkül ugyanazokkal az állomáskódokkal (a sorrendtől függetlenül) csak egy bejegyzés vehető fel.
 
 ### Módosítás később
 
 A bejegyzés **Beállítás** (Configure) gombjával módosítható:
 
-- **Település**: más településre vált; a bejegyzés és az eszközök neve, valamint az entitások azonosítói megmaradnak.
-- **Időjárás-állomások kódjai**: állomások hozzáadása, törlése vagy sorrendjük módosítása; mind törölve a `<Név> Időjárás` eszköz megszűnik.
+- **Név**: a bejegyzés és a szolgáltatások neve azonnal megváltozik. Ha egy általad átnevezett szolgáltatás nevében szerepel a bejegyzés régi neve, abban is lecserélődik; az entitások azonosítói megmaradnak.
+- **Település**: más településre vált; a bejegyzés és a szolgáltatások neve, valamint az entitások azonosítói megmaradnak. Törölve a `<Név> Előrejelzés` szolgáltatás, az entitásai és a mentett előrejelzés megszűnnek; ha újra megadod, ismét létrejönnek.
+- **Időjárás-állomások kódjai**: állomások hozzáadása, törlése vagy sorrendjük módosítása; mind törölve a `<Név> Időjárás` szolgáltatás megszűnik.
 - **Összevonás módja**: Prioritás, Legfrissebb vagy Átlag.
 - **Mérés maximális kora**: az ennél régebbi állomásmérés nem számít, percben.
 
-A bejegyzés nevét a Home Assistant saját **Átnevezés** funkciójával lehet módosítani.
+A település és az állomáskódok közül legalább az egyiknek meg kell maradnia.
+
+A bejegyzés a Home Assistant saját **Átnevezés** menüpontjával is átnevezhető: ilyenkor a szolgáltatások neve csak a bejegyzés újratöltése vagy a Home Assistant újraindítása után követi az új nevet, az általad átnevezett szolgáltatások neve pedig nem változik.
+
+## Eltávolítás
+
+1. **Beállítások → Eszközök és szolgáltatások → Időkép Weather & Forecast**: töröld a bejegyzéseket (a bejegyzés **⋮** menüjében **Törlés**). A hozzájuk tartozó szolgáltatások, entitások és a mentett előrejelzés is törlődnek.
+2. Ha van **Radar** bejegyzés, azt is töröld.
+3. Ha HACS-on keresztül telepítetted: a HACS-ban nyisd meg az **Időkép Weather & Forecast** integrációt, és válaszd a **⋮ → Eltávolítás** (Remove) menüpontot. Kézi telepítésnél töröld a `custom_components/idokep_weather_and_forecast` mappát.
+4. Indítsd újra a Home Assistantot.
+
+Az idokep.hu oldalán nincs teendő: az integráció nem hoz létre fiókot, és semmit nem küld fel.
 
 ## Frissítési ütemezés
 
@@ -168,18 +188,20 @@ A bejegyzés nevét a Home Assistant saját **Átnevezés** funkciójával lehet
 | UV-térkép (`/uv`) | UV-B index | 10 percenként (x:00:59, x:10:59, x:20:59, …) | percenként újra |
 | Radar (`/radar/`) | radarkép | 5 percenként (x:00:59, x:05:59, …) | percenként, amíg új kép nem érkezik (hiba után is) |
 
-- Indításkor (újraindítás, újratöltés, új bejegyzés) minden adat azonnal frissül. Ami ekkor nem sikerül, az percenként újrapróbálódik az első sikeres letöltésig (az előrejelzés is); utána a táblázat szerinti ütemezés érvényes. A bejegyzés akkor is elindul, ha semmi sem tölthető le.
+- Indításkor (újraindítás, újratöltés, új bejegyzés) minden adat azonnal frissül. Ami ekkor nem sikerül, az percenként újrapróbálódik az első sikeres letöltésig (az előrejelzés is); utána a táblázat szerinti ütemezés érvényes.
+- Ha induláskor semmit sem lehetne mutatni, a bejegyzés nem indul el: a Home Assistant az Eszközök és szolgáltatások oldalon a hiba okával együtt jelzi, és egyre ritkábban (legfeljebb 10 percenként) újrapróbálja. Településsel rendelkező bejegyzésnél ez az az eset, amikor a település egyik oldala sem érhető el, és az aktuális órát tartalmazó mentett előrejelzés sincs; település nélküli bejegyzésnél az, amikor egyik állomás adatfájlja sem tölthető le; a Radar bejegyzésnél az, amikor a radar nem érhető el. Az integráció ilyenkor legfeljebb hibakeresési (debug) szinten ír a naplóba, és azt sem jelzi, ha utána sikerül.
+- Ha egy bejegyzés településnevét az idokep.hu nem ismeri (egy korábbi verzió még elmenthetett ilyet), a bejegyzés hibaüzenettel nem indul el, és nem is próbálkozik újra, mert az oldal ilyenkor Budapest időjárását adná. Javítsd a nevet a bejegyzés **Beállítás** (Configure) gombjával. Ez induláskor derül ki; ha az aktuális időjárás oldala épp nem érhető el, az előrejelzési oldal címéből, ha pedig az sem, a következő induláskor.
 - A sikertelen letöltés entitásai „nem elérhető” állapotúak, a korábbi adatot nem mutatják; az előrejelzés a fenti kivétel.
 - Az ütemezett letöltés akkor is megtörténik, ha korábban jön, mint az újrapróbálás (az előrejelzésé teljes órakor).
-- A naplóba forrásonként (oldal, állomás, radar) egy figyelmeztetés kerül, amikor a letöltés először nem sikerül, és egy, amikor újra sikerül; a közbenső hibák nem.
+- A naplóba forrásonként (oldal, állomás, radar) egy figyelmeztetés kerül, amikor a letöltés először nem sikerül, és egy, amikor újra sikerül; a közbenső hibák nem. A bejegyzés újratöltése (és a Home Assistant újraindítása) után elölről kezdi: a még mindig sikertelen letöltésre újra figyelmeztet, de ha az újratöltés után rögtön sikerül, nem jelzi, hogy újra sikerül.
 - Váratlan hibánál a figyelmeztetés a hiba részleteit (traceback) is tartalmazza.
-- Az ismeretlen időjárás-leírásról és szélerősségről értékenként egy figyelmeztetés kerül a naplóba.
+- Az ismeretlen időjárás-leírásról és szélerősségről bejegyzésenként és indulásonként, értékenként egy figyelmeztetés kerül a naplóba.
 - Csak az az oldal töltődik le, amelyet legalább egy bekapcsolt entitás használ; a többi újraindításkor sem. A térképoldalakhoz a saját szenzoraik tartoznak: ha egy oldal minden szenzorát kikapcsolod, az oldal letöltése leáll, és az időjárás entitás megfelelő attribútumai is eltűnnek. Az előrejelzési oldalt az időjárás entitás is használja, így az csak akkor áll le, ha az is ki van kapcsolva.
 - Ha a bejegyzés rendszerbeállításaiban kikapcsolod a lekérdezést (**Enable polling for updates**), az ütemezett frissítés leáll.
 
 ## Adattárolás
 
-Az előrejelzési oldal legutóbbi sikeresen letöltött óránkénti és napi előrejelzése a Home Assistant `config/.storage/idokep_weather_and_forecast.<bejegyzés azonosító>` fájljába kerül. A bejegyzés törlésekor a fájl is törlődik.
+Az előrejelzési oldal legutóbbi sikeresen letöltött óránkénti és napi előrejelzése a Home Assistant `config/.storage/idokep_weather_and_forecast.<bejegyzés azonosító>` fájljába kerül. A fájl a bejegyzés törlésekor, illetve a település törlésekor törlődik.
 
 A mentett előrejelzés két célt szolgál, újraindítás után is:
 

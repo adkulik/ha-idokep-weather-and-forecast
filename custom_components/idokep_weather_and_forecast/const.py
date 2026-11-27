@@ -23,8 +23,11 @@ MAX_AGE = "max_age"
 DEFAULT_MAX_AGE = 60
 MIN_MAX_AGE = 1
 MAX_MAX_AGE = 1440
-# A location entry's idokep.hu location name (entry data), e.g. "Budapest"
+# A location entry's idokep.hu location name (entry data), e.g. "Budapest";
+# left out of an entry without a forecast
 LOCATION = "location"
+# The setup form's checkbox that adds the national Radar service entry
+ADD_RADAR = "add_radar"
 
 # Data sources, one per idokep.hu page
 CURRENT = "current"
@@ -33,9 +36,9 @@ HUMIDITY_MAP = "humidity_map"
 PRESSURE_MAP = "pressure_map"
 UV_MAP = "uv_map"
 
-# The national Radar service entry, created automatically next to the first
-# location entry. Its data is {ENTRY_TYPE: RADAR}; location entries have
-# {"location": ...}.
+# The national Radar service entry, added by the setup form. Its data is
+# {ENTRY_TYPE: RADAR}; location entries have {"location": ...} or, without a
+# forecast, no data.
 ENTRY_TYPE = "type"
 RADAR = "radar"
 RADAR_TITLE = "Radar"

@@ -9,19 +9,19 @@ import html
 import re
 import socket
 import unicodedata
+import zoneinfo
 from abc import ABC, abstractmethod
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import aiohttp
-from bs4 import BeautifulSoup, Comment, Tag
-
-try:
-    import zoneinfo
-except ImportError:
-    zoneinfo = None
+from slugify import slugify
 
 from .const import LOGGER
-from .failures import warn_once
+from .failures import FailureRecords
+from .html_tree import Element, parse_html
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 
 # Configuration and constants
@@ -66,6 +66,34 @@ class IdokepApiClientError(Exception):
 
 class IdokepApiClientCommunicationError(IdokepApiClientError):
     """Exception to indicate a communication error."""
+
+
+class IdokepApiClientUnknownLocationError(IdokepApiClientError):
+    """Exception to indicate a settlement idokep.hu doesn't know."""
+
+
+# What follows the settlement's name in the pages' titles
+CURRENT_TITLE_END = " időjárás - Időkép"
+FORECAST_TITLE_END = " időjárás előrejelzés | Időkép"
+
+
+def _titled_settlement(page: Element, ending: str) -> str | None:
+    """Return what a page's title names before the ending, None without it."""
+    element = page.find("title")
+    title = element.text.strip() if element is not None else ""
+    return title.removesuffix(ending) if title.endswith(ending) else None
+
+
+def _require_settlement(served: str, location: str) -> None:
+    """
+    Raise IdokepApiClientUnknownLocationError for another settlement's page.
+
+    For a name it doesn't know, the site serves Budapest's pages. Letter case
+    and accents don't matter.
+    """
+    if slugify(served) != slugify(location):
+        msg = f"idokep.hu served {served} for {location}"
+        raise IdokepApiClientUnknownLocationError(msg)
 
 
 # Weather condition mapper
@@ -158,16 +186,20 @@ class WeatherConditionMapper:
         return cls._CLOUD_COVERAGE.get(condition.strip().lower())
 
     @classmethod
-    def map_condition(cls, condition: str) -> str:
+    def map_condition(
+        cls, condition: str, records: FailureRecords | None = None
+    ) -> str:
         """
         Map Hungarian condition to Home Assistant standard condition.
 
         "unknown" for a description it does not recognise, which is
-        warned about once.
+        warned about once; records keeps what was warned about.
         """
         mapped = cls._CONDITION_MAPPING.get(condition.lower())
         if mapped is None:
-            warn_once(LOGGER, "Unknown idokep.hu weather %r", condition)
+            (records or FailureRecords()).warn_once(
+                LOGGER, "Unknown idokep.hu weather %r", condition
+            )
             return "unknown"
         return mapped
 
@@ -293,11 +325,7 @@ class TimeUtils:
     @staticmethod
     def get_local_timezone() -> dt.tzinfo:
         """Get Budapest timezone."""
-        return (
-            zoneinfo.ZoneInfo("Europe/Budapest")
-            if zoneinfo is not None
-            else dt.timezone(dt.timedelta(hours=2))
-        )
+        return zoneinfo.ZoneInfo("Europe/Budapest")
 
     @staticmethod
     def day_start(day: dt.date) -> str:
@@ -333,13 +361,24 @@ class HttpClient:
 
     async def get_html(self, url: str) -> str:
         """Get HTML content from URL with error handling."""
+        async with self._response(url) as response:
+            return await response.text()
+
+    async def check(self, url: str) -> None:
+        """Raise get_html's errors if URL is not served; read nothing."""
+        async with self._response(url):
+            pass
+
+    @contextlib.asynccontextmanager
+    async def _response(self, url: str) -> AsyncIterator[aiohttp.ClientResponse]:
+        """Request URL; turn network and HTTP failures into the client's error."""
         try:
             async with (
                 asyncio.timeout(IdokepConfig.TIMEOUT),
                 self._session.get(url, headers=_BROWSER_HEADERS) as response,
             ):
                 response.raise_for_status()
-                return await response.text()
+                yield response
         except TimeoutError as exception:
             msg = f"Timeout error fetching {url} - {exception}"
             raise IdokepApiClientCommunicationError(msg) from exception
@@ -352,32 +391,43 @@ class HttpClient:
 class WeatherParser(ABC):
     """Abstract base class for weather data parsers."""
 
+    def __init__(self, records: FailureRecords | None = None) -> None:
+        """
+        Initialize the parser.
+
+        records: what is logged already, so unknown words are warned about
+        once.
+        """
+        self._records = records or FailureRecords()
+
     @abstractmethod
-    def parse(self, soup: BeautifulSoup) -> dict[str, Any]:
-        """Parse weather data from BeautifulSoup object."""
+    def parse(self, page: Element) -> dict[str, Any]:
+        """Parse weather data from a page."""
 
 
 # Specific parser implementations
 class CurrentWeatherParser(WeatherParser):
     """Parser for current weather data."""
 
-    def parse(self, soup: BeautifulSoup) -> dict[str, Any]:
+    def parse(self, page: Element) -> dict[str, Any]:
         """Parse current weather data."""
         result = {}
 
         # Temperature
-        temp_div = soup.find("div", class_="current-temperature")
-        if isinstance(temp_div, Tag):
+        temp_div = page.find("div", "current-temperature")
+        if temp_div is not None:
             # Match both ASCII 'C' and the Unicode DEGREE CELSIUS sign '\u2103'
             match = re.search(r"(-?\d+)[^\d]*(?:C|\u2103)", temp_div.text)
             if match:
                 result["temperature"] = int(match.group(1))
 
         # Weather condition (class has no 'ik' prefix since 2026 redesign)
-        cond_div = soup.find("div", class_="current-weather")
-        if isinstance(cond_div, Tag):
+        cond_div = page.find("div", "current-weather")
+        if cond_div is not None:
             condition = cond_div.text.strip()
-            result["condition"] = WeatherConditionMapper.map_condition(condition)
+            result["condition"] = WeatherConditionMapper.map_condition(
+                condition, self._records
+            )
             result["cloud_coverage"] = WeatherConditionMapper.cloud_coverage(condition)
             result["storm_now"] = condition.lower() in STORM_TEXTS
 
@@ -426,7 +476,7 @@ class AlertParser(WeatherParser):
         (("hőség", "meleg"), "heat"),
     ]
 
-    def parse(self, soup: BeautifulSoup) -> dict[str, Any]:
+    def parse(self, page: Element) -> dict[str, Any]:
         """
         Parse the alerts of the hourly cards and the banner's warnings.
 
@@ -435,14 +485,14 @@ class AlertParser(WeatherParser):
         ("figyelmeztetés"). Both are lists of {"type", "level"}: one item
         per type in force, at its highest level.
         """
-        warnings = self._merge(self._parse_banners(soup))
+        warnings = self._merge(self._parse_banners(page))
         return {
-            "alerts": self._merge(self._parse_hourly_alerts(soup)),
+            "alerts": self._merge(self._parse_hourly_alerts(page)),
             "warnings": warnings,
             "warning_level": highest_alert_level(warnings),
         }
 
-    def _parse_banners(self, soup: BeautifulSoup) -> list[dict[str, str]]:
+    def _parse_banners(self, page: Element) -> list[dict[str, str]]:
         """
         Return the banners at the top of the page.
 
@@ -453,24 +503,19 @@ class AlertParser(WeatherParser):
         """
         return [
             item
-            for box in soup.find_all("div", class_="inlineWeatherAlert")
-            if isinstance(box, Tag)
+            for box in page.find_all("div", "inlineWeatherAlert")
             for item in self._alerts_from_text(box.get_text(" ", strip=True))
         ]
 
-    def _parse_hourly_alerts(self, soup: BeautifulSoup) -> list[dict[str, str]]:
+    def _parse_hourly_alerts(self, page: Element) -> list[dict[str, str]]:
         """Return the alerts of the first hourly cards (from their icons' text)."""
         alerts = []
-        for container in soup.find_all(
-            "div", class_="genericHourlyAlert", limit=self.HOURS
-        ):
-            if not isinstance(container, Tag):
-                continue
-            link = container.find("a", class_="hover-over")
-            if not isinstance(link, Tag):
+        for container in page.find_all("div", "genericHourlyAlert")[: self.HOURS]:
+            link = container.find("a", "hover-over")
+            if link is None:
                 continue
             description = link.get("data-bs-content")
-            if isinstance(description, str):
+            if description is not None:
                 alerts.extend(self._alerts_from_text(description))
         return alerts
 
@@ -582,12 +627,13 @@ class HourlyForecastParser(WeatherParser):
     current wind and precipitation values.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, records: FailureRecords | None = None) -> None:
         """Initialize the parser."""
+        super().__init__(records)
         # Hourly items of the last parse, to keep the current hour from
         self._last_forecast: list[dict[str, Any]] = []
 
-    def parse(self, soup: BeautifulSoup) -> dict[str, Any]:
+    def parse(self, page: Element) -> dict[str, Any]:
         """Parse hourly forecast data."""
         result = {}
         forecast = []
@@ -598,18 +644,15 @@ class HourlyForecastParser(WeatherParser):
         # (hourly forecast begins with today's remaining hours)
         base_date = now.date()
 
-        hourly_cards = soup.find_all("div", class_="ik wide-hourly-forecast-card")
+        hourly_cards = page.find_all("div", "ik wide-hourly-forecast-card")
 
         last_hour = None
         current_date = base_date
 
         for card in hourly_cards:
-            if not isinstance(card, Tag):
-                continue
-
             # Extract hour first to detect day transitions
-            hour_div = card.find("div", class_="ik wide-hourly-forecast-hour")
-            if hour_div and isinstance(hour_div, Tag):
+            hour_div = card.find("div", "ik wide-hourly-forecast-hour")
+            if hour_div is not None:
                 hour_text = hour_div.text.strip()
                 try:
                     hour_int = int(hour_text.split(":")[0])
@@ -700,25 +743,20 @@ class HourlyForecastParser(WeatherParser):
 
     def _parse_hourly_card(
         self,
-        card: Tag,
-        hour_div: Tag | None,
+        card: Element,
+        hour_div: Element | None,
         forecast_date: dt.date,
         local_tz: dt.tzinfo | None = None,
     ) -> dict[str, Any] | None:
         """Parse individual hourly forecast card."""
-        temp_div = card.find("div", class_="ik tempValue")  # class unchanged
+        temp_div = card.find("div", "ik tempValue")  # class unchanged
 
-        if not (
-            hour_div
-            and temp_div
-            and isinstance(hour_div, Tag)
-            and isinstance(temp_div, Tag)
-        ):
+        if hour_div is None or temp_div is None:
             return None
 
         temp_a = temp_div.find("a")
         temp = None
-        if temp_a and isinstance(temp_a, Tag):
+        if temp_a is not None:
             with contextlib.suppress(ValueError):
                 temp = int(temp_a.text.strip())
 
@@ -758,7 +796,16 @@ class HourlyForecastParser(WeatherParser):
         except (ValueError, IndexError):
             return None
 
-    def extract_wind_bearing(self, card: Tag) -> int | None:
+    @staticmethod
+    def _wind_arrow(card: Element) -> Element | None:
+        """Return the card's wind arrow."""
+        # Its strength class varies (e.g. "ik wind mersekelt")
+        for box in card.find_all("div", "hourly-wind"):
+            if (arrow := box.find("div", "wind")) is not None:
+                return arrow
+        return None
+
+    def extract_wind_bearing(self, card: Element) -> int | None:
         """
         Extract wind bearing in degrees from hourly card.
 
@@ -766,91 +813,85 @@ class HourlyForecastParser(WeatherParser):
         (e.g. style="--rotateAngle:6deg"); the angle is the direction the
         wind blows from, as Home Assistant expects.
         """
-        # The strength class varies (e.g. "ik wind mersekelt"), so match by CSS
-        wind_div = card.select_one("div.hourly-wind div.wind")
-        if not wind_div:
+        wind_div = self._wind_arrow(card)
+        if wind_div is None:
             return None
 
         style = wind_div.get("style", "")
-        if not isinstance(style, str):
-            return None
-
         angle_match = re.search(r"--rotateAngle:\s*(-?\d+)deg", style)
         if not angle_match:
             return None
         return int(angle_match.group(1)) % 360
 
-    def extract_wind_strength(self, card: Tag) -> str | None:
+    def extract_wind_strength(self, card: Element) -> str | None:
         """
         Extract the wind strength level (e.g. "moderate_breeze") of a card.
 
         From the arrow's class (e.g. "ik wind mersekelt"), or else from the
         tooltip text (e.g. "Mérsékelt északi szél"). Unknown words give None.
         """
-        wind_div = card.select_one("div.hourly-wind div.wind")
-        if not wind_div:
+        wind_div = self._wind_arrow(card)
+        if wind_div is None:
             return None
-        classes = wind_div.get("class") or []
+        classes = wind_div.classes
         for css_class in classes:
             if css_class not in ("ik", "wind"):
                 level = WindStrengthMapper.from_class(css_class)
                 if level is not None:
                     return level
         link = wind_div.find_parent("a")
-        tooltip = link.get("data-bs-content") if link else None
-        if isinstance(tooltip, str):
+        tooltip = None if link is None else link.get("data-bs-content")
+        if tooltip is not None:
             level = WindStrengthMapper.from_text(tooltip)
             if level is not None:
                 return level
-        warn_once(
+        self._records.warn_once(
             LOGGER,
             "Unknown idokep.hu wind strength %r",
-            tooltip if isinstance(tooltip, str) else " ".join(classes),
+            " ".join(classes) if tooltip is None else tooltip,
         )
         return None
 
     @staticmethod
-    def _condition_text(card: Tag) -> str | None:
+    def _condition_text(card: Element) -> str | None:
         """Return the condition's Hungarian text from the icon container tag."""
-        icon_container = card.find("div", class_="forecast-icon-container")
-        if isinstance(icon_container, Tag):
+        icon_container = card.find("div", "forecast-icon-container")
+        if icon_container is not None:
             icon_a = icon_container.find("a")
-            if isinstance(icon_a, Tag):
-                condition = icon_a.get("data-bs-content")
-                if isinstance(condition, str):
-                    return condition
+            if icon_a is not None:
+                return icon_a.get("data-bs-content")
         return None
 
-    def extract_condition(self, card: Tag) -> str | None:
+    def extract_condition(self, card: Element) -> str | None:
         """Extract weather condition from the icon container tag."""
         text = self._condition_text(card)
         if text is None:
             return None
-        condition = WeatherConditionMapper.map_condition(text)
+        condition = WeatherConditionMapper.map_condition(text, self._records)
         if condition == "sunny" and self._has_night_icon(card):
             return "clear-night"
         return condition
 
     @staticmethod
-    def _has_night_icon(card: Tag) -> bool:
+    def _has_night_icon(card: Element) -> bool:
         """Return True if the card's icon is a night one (310.svg; by day 010.svg)."""
-        icon_container = card.find("div", class_="forecast-icon-container")
-        icon = icon_container.find("img") if isinstance(icon_container, Tag) else None
-        source = icon.get("src") if isinstance(icon, Tag) else None
-        return isinstance(source, str) and bool(re.search(r"/3\d\d\.svg", source))
+        icon_container = card.find("div", "forecast-icon-container")
+        icon = None if icon_container is None else icon_container.find("img")
+        source = "" if icon is None else icon.get("src", "")
+        return bool(re.search(r"/3\d\d\.svg", source))
 
-    def _is_stormy(self, card: Tag) -> bool:
+    def _is_stormy(self, card: Element) -> bool:
         """Return True if the card's condition is a storm."""
         return (self._condition_text(card) or "").lower() in STORM_TEXTS
 
-    def extract_precipitation_probability(self, card: Tag) -> int:
+    def extract_precipitation_probability(self, card: Element) -> int:
         """Extract precipitation probability."""
-        rain_chance_div = card.find("div", class_="ik hourly-rain-chance")
-        if not (rain_chance_div and isinstance(rain_chance_div, Tag)):
+        rain_chance_div = card.find("div", "ik hourly-rain-chance")
+        if rain_chance_div is None:
             return 0
 
         rain_a = rain_chance_div.find("a")
-        if not (rain_a and isinstance(rain_a, Tag)):
+        if rain_a is None:
             return 0
 
         rain_text = rain_a.text.strip()
@@ -862,7 +903,7 @@ class HourlyForecastParser(WeatherParser):
         except ValueError:
             return 0
 
-    def extract_precipitation_amount(self, card: Tag) -> float:
+    def extract_precipitation_amount(self, card: Element) -> float:
         """
         Return the hour's precipitation in mm; 0 when the card shows none.
 
@@ -874,15 +915,15 @@ class HourlyForecastParser(WeatherParser):
         follows it but stops at 16 px (7 px: 0.1 mm, 12 px: 0.2 mm, 16 px:
         0.3 mm or more), so it is only used if the comment is missing.
         """
-        level = card.find("div", class_="hourly-rainlevel")
-        if isinstance(level, Tag):
-            for comment in level.find_all(string=lambda text: isinstance(text, Comment)):
+        level = card.find("div", "hourly-rainlevel")
+        if level is not None:
+            for comment in level.comments():
                 match = re.search(r"(\d+(?:[.,]\d+)?)", comment)
                 if match:
                     return round(float(match.group(1).replace(",", ".")) / 10, 2)
-        meter = card.find("div", class_="hourly-rainlevel-meter")
-        style = meter.get("style", "") if isinstance(meter, Tag) else ""
-        match = re.search(r"height:\s*(\d+)px", style if isinstance(style, str) else "")
+        meter = card.find("div", "hourly-rainlevel-meter")
+        style = "" if meter is None else meter.get("style", "")
+        match = re.search(r"height:\s*(\d+)px", style)
         if not match:
             return 0
         height = int(match.group(1))
@@ -905,8 +946,9 @@ class DailyForecastParser(WeatherParser):
     the daily forecast and as today's max/min, until midnight.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, records: FailureRecords | None = None) -> None:
         """Initialize the parser."""
+        super().__init__(records)
         # Today's daily forecast entry, kept for when the page drops it
         self._today_item: dict[str, Any] | None = None
 
@@ -925,15 +967,22 @@ class DailyForecastParser(WeatherParser):
         "december": 12,
     }
 
-    def extract_date(self, col: Tag) -> dt.date | None:
+    def extract_date(self, col: Element) -> dt.date | None:
         """
         Return the date a daily column is for.
 
         The icon link's title holds it, e.g. "Péntek<br>2026. október 30.".
         """
-        link = col.select_one(".dfIconAlert a[title]")
-        title = link.get("title") if link else None
-        if not isinstance(title, str):
+        title = next(
+            (
+                link.attrs["title"]
+                for box in col.find_all(class_="dfIconAlert")
+                for link in box.find_all("a")
+                if "title" in link.attrs
+            ),
+            None,
+        )
+        if title is None:
             return None
         match = re.search(r"(\d{4})\.\s*(\w+)\s+(\d{1,2})\.", title)
         if not match or match.group(2).lower() not in self._MONTHS:
@@ -947,20 +996,17 @@ class DailyForecastParser(WeatherParser):
         except ValueError:
             return None
 
-    def parse(self, soup: BeautifulSoup) -> dict[str, Any]:
+    def parse(self, page: Element) -> dict[str, Any]:
         """Parse daily forecast data."""
         result = {}
         daily_forecast = []
-        daily_cols = soup.find_all("div", class_="ik dailyForecastCol")
+        daily_cols = page.find_all("div", "ik dailyForecastCol")
         today = dt.datetime.now(tz=TimeUtils.get_local_timezone()).date()
 
         # Each column carries its own date: in the evening idokep.hu drops
         # today's column, so the strip does not always start with today
         previous_date: dt.date | None = None
         for col in daily_cols:
-            if not isinstance(col, Tag):
-                continue
-
             forecast_date = self.extract_date(col)
             if forecast_date is None:
                 # Unreadable date: assume the day after the previous column
@@ -995,7 +1041,7 @@ class DailyForecastParser(WeatherParser):
         """Remember today's daily entry from before a restart."""
         self._today_item = item
 
-    def parse_today_min_max(self, soup: BeautifulSoup) -> dict[str, int]:
+    def parse_today_min_max(self, page: Element) -> dict[str, int]:
         """
         Extract today's forecast max and min temperature.
 
@@ -1003,8 +1049,8 @@ class DailyForecastParser(WeatherParser):
         from earlier today once the page has dropped that column.
         """
         today = dt.datetime.now(tz=TimeUtils.get_local_timezone()).date()
-        for col in soup.find_all("div", class_="ik dailyForecastCol"):
-            if isinstance(col, Tag) and self.extract_date(col) == today:
+        for col in page.find_all("div", "ik dailyForecastCol"):
+            if self.extract_date(col) == today:
                 self._today_item = self._parse_daily_column(col, today)
                 break
 
@@ -1028,11 +1074,15 @@ class DailyForecastParser(WeatherParser):
             return None
         return self._today_item
 
-    def _parse_daily_column(self, col: Tag, forecast_date: dt.date) -> dict[str, Any]:
+    def _parse_daily_column(self, col: Element, forecast_date: dt.date) -> dict[str, Any]:
         """Parse individual daily forecast column."""
         min_temp, max_temp = self.extract_temperatures(col)
         text = self._condition_text(col)
-        condition = WeatherConditionMapper.map_condition(text) if text else None
+        condition = (
+            WeatherConditionMapper.map_condition(text, self._records)
+            if text
+            else None
+        )
         precipitation = self.extract_precipitation(col)
 
         return {
@@ -1044,7 +1094,7 @@ class DailyForecastParser(WeatherParser):
             "precipitation": precipitation,
         }
 
-    def extract_temperatures(self, col: Tag) -> tuple[int | None, int | None]:
+    def extract_temperatures(self, col: Element) -> tuple[int | None, int | None]:
         """
         Extract min and max temperatures from column.
 
@@ -1053,8 +1103,8 @@ class DailyForecastParser(WeatherParser):
 
         """
         # First check for min-max-close or min-max-closer div (when temps are close)
-        close_div = col.find("div", class_=["ik min-max-close", "ik min-max-closer"])
-        if close_div and isinstance(close_div, Tag):
+        close_div = col.find("div", ("ik min-max-close", "ik min-max-closer"))
+        if close_div is not None:
             a_tags = close_div.find_all("a")
             min_required_tags = 2
             if len(a_tags) >= min_required_tags:
@@ -1070,35 +1120,37 @@ class DailyForecastParser(WeatherParser):
         max_temp = self.extract_temperature(col, "ik max")
         return (min_temp, max_temp)
 
-    def extract_temperature(self, col: Tag, class_name: str) -> int | None:
+    def extract_temperature(self, col: Element, class_name: str) -> int | None:
         """Extract temperature from column."""
-        temp_div = col.find("div", class_=class_name)
-        if temp_div and isinstance(temp_div, Tag):
+        temp_div = col.find("div", class_name)
+        if temp_div is not None:
             temp_a = temp_div.find("a")
-            if temp_a and isinstance(temp_a, Tag):
+            if temp_a is not None:
                 match = re.search(r"(-?\d+)", temp_a.get_text(strip=True))
                 if match:
                     return int(match.group(1))
         return None
 
-    def extract_condition(self, col: Tag) -> str | None:
+    def extract_condition(self, col: Element) -> str | None:
         """Extract weather condition from column."""
         text = self._condition_text(col)
-        return WeatherConditionMapper.map_condition(text) if text else None
+        if not text:
+            return None
+        return WeatherConditionMapper.map_condition(text, self._records)
 
     @staticmethod
-    def _condition_text(col: Tag) -> str | None:
+    def _condition_text(col: Element) -> str | None:
         """Return the day's Hungarian description from the column's popover."""
-        icon_alert = col.find("div", class_="ik dfIconAlert")
-        if not (icon_alert and isinstance(icon_alert, Tag)):
+        icon_alert = col.find("div", "ik dfIconAlert")
+        if icon_alert is None:
             return None
 
         a_tag = icon_alert.find("a")
-        if not (a_tag and isinstance(a_tag, Tag)):
+        if a_tag is None:
             return None
 
         popover = a_tag.get("data-bs-content")
-        if not isinstance(popover, str):
+        if popover is None:
             return None
 
         # The popover HTML contains the forecast icon img; extract condition from
@@ -1121,7 +1173,7 @@ class DailyForecastParser(WeatherParser):
 
         return None
 
-    def extract_precipitation(self, col: Tag) -> float:
+    def extract_precipitation(self, col: Element) -> float:
         """
         Extract the day's precipitation amount in mm (e.g. "0,5 mm" -> 0.5).
 
@@ -1129,15 +1181,15 @@ class DailyForecastParser(WeatherParser):
         scattered); the amount then comes from the day's rain bar, which is
         always 2 px per mm + 1 px (2 mm: 5 px, 5 mm: 11 px; ".": 3 px = 1 mm).
         """
-        precip_span = col.find("span", class_="ik mm")
-        if precip_span and isinstance(precip_span, Tag):
+        precip_span = col.find("span", "ik mm")
+        if precip_span is not None:
             match = re.search(r"(\d+(?:[.,]\d+)?)", precip_span.text)
             if match:
                 return float(match.group(1).replace(",", "."))
-        rain_bar = col.find("div", class_="rainlevel")
-        if isinstance(rain_bar, Tag):
+        rain_bar = col.find("div", "rainlevel")
+        if rain_bar is not None:
             style = rain_bar.get("style", "")
-            match = re.search(r"height:\s*(\d+)px", style if isinstance(style, str) else "")
+            match = re.search(r"height:\s*(\d+)px", style)
             if match and int(match.group(1)) > 1:
                 return round((int(match.group(1)) - 1) / 2, 2)
         return 0
@@ -1206,20 +1258,89 @@ def station_map_average(page: str, map_name: str, location: str) -> float | None
 class IdokepApiClient:
     """Időkép client: one fetch method per idokep.hu page."""
 
-    def __init__(self, session: aiohttp.ClientSession) -> None:
-        """Initialize the API client."""
+    def __init__(
+        self, session: aiohttp.ClientSession, records: FailureRecords | None = None
+    ) -> None:
+        """
+        Initialize the API client.
+
+        records: what is logged already, shared by the parsers.
+        """
+        records = records or FailureRecords()
         self._http_client = HttpClient(session)
-        self._current_parser = CurrentWeatherParser()
-        self._hourly_parser = HourlyForecastParser()
-        self._daily_parser = DailyForecastParser()
-        self._alert_parser = AlertParser()
+        self._current_parser = CurrentWeatherParser(records)
+        self._hourly_parser = HourlyForecastParser(records)
+        self._daily_parser = DailyForecastParser(records)
+        self._alert_parser = AlertParser(records)
 
     # Each method raises IdokepApiClientCommunicationError on network/HTTP
     # failure, so the caller can tell a failed fetch from a page without data.
+    async def async_check_connection(self, location: str) -> None:
+        """
+        Check that at least one of the settlement's two pages is served.
+
+        The current conditions page is tried first, then the forecast page.
+        """
+        try:
+            await self._http_client.check(
+                IdokepConfig.get_current_weather_url(location)
+            )
+        except IdokepApiClientCommunicationError:
+            await self._http_client.check(
+                IdokepConfig.get_hourly_forecast_url(location)
+            )
+
+    async def async_validate_location(self, location: str) -> str:
+        """
+        Check that idokep.hu knows the settlement and return its spelling.
+
+        The current conditions page has to be titled with the name asked for
+        (letter case and accents aside). The title's spelling is returned, as
+        the maps' station names only match with their accents. Raises
+        IdokepApiClientUnknownLocationError for another settlement's page, and
+        IdokepApiClientCommunicationError for a page without weather data.
+
+        While that page can't be read, the forecast page can still show that
+        the name is unknown, but not that it is right: the site has answered
+        some unknown names with a server error on the current conditions page.
+        """
+        try:
+            return await self._current_page_spelling(location)
+        except IdokepApiClientCommunicationError:
+            await self._refuse_another_forecast(location)
+            raise
+
+    async def _current_page_spelling(self, location: str) -> str:
+        """Return the name as the current conditions page spells it."""
+        url = IdokepConfig.get_current_weather_url(location)
+        page = await self._get_page(url)
+        served = _titled_settlement(page, CURRENT_TITLE_END)
+        if served is None or "temperature" not in self._current_parser.parse(page):
+            msg = f"No weather data on {url}"
+            raise IdokepApiClientCommunicationError(msg)
+        _require_settlement(served, location)
+        return " ".join(served.split())
+
+    async def _refuse_another_forecast(self, location: str) -> None:
+        """
+        Raise if the forecast page served is another settlement's.
+
+        Nothing is raised if it can't be downloaded or names no settlement.
+        """
+        try:
+            page = await self._get_page(
+                IdokepConfig.get_hourly_forecast_url(location)
+            )
+        except IdokepApiClientCommunicationError:
+            return
+        served = _titled_settlement(page, FORECAST_TITLE_END)
+        if served is not None:
+            _require_settlement(served, location)
+
     async def async_get_current_weather(self, location: str) -> dict[str, Any]:
         """Fetch and parse the current conditions page."""
-        soup = await self._get_soup(IdokepConfig.get_current_weather_url(location))
-        return self._current_parser.parse(soup)
+        page = await self._get_page(IdokepConfig.get_current_weather_url(location))
+        return self._current_parser.parse(page)
 
     async def async_get_humidity_map(self, location: str) -> dict[str, float | None]:
         """
@@ -1259,12 +1380,12 @@ class IdokepApiClient:
         Hourly forecast, alerts, daily forecast and today's max/min all come
         from this one download.
         """
-        soup = await self._get_soup(IdokepConfig.get_hourly_forecast_url(location))
+        page = await self._get_page(IdokepConfig.get_hourly_forecast_url(location))
         result = {
-            **self._hourly_parser.parse(soup),
-            **self._alert_parser.parse(soup),
-            **self._daily_parser.parse(soup),
-            **self._daily_parser.parse_today_min_max(soup),
+            **self._hourly_parser.parse(page),
+            **self._alert_parser.parse(page),
+            **self._daily_parser.parse(page),
+            **self._daily_parser.parse_today_min_max(page),
         }
         return result
 
@@ -1276,7 +1397,6 @@ class IdokepApiClient:
         """Seed the hourly items restored from disk (keeps the current hour)."""
         self._hourly_parser.restore_hourly_forecast(items)
 
-    async def _get_soup(self, url: str) -> BeautifulSoup:
+    async def _get_page(self, url: str) -> Element:
         """Download a page and return it parsed."""
-        page = await self._http_client.get_html(url)
-        return BeautifulSoup(page, "html.parser")
+        return parse_html(await self._http_client.get_html(url))

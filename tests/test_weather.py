@@ -49,7 +49,7 @@ class TestIdokepWeatherEntity:  # pylint: disable=too-many-public-methods
 
         entity = IdokepWeatherEntity(mock_coordinator)
 
-        assert entity._attr_unique_id == "test_entry_id_weather"
+        assert entity._attr_unique_id == "test_entry_id_forecast"
 
     def test_device_info_property(self, mock_coordinator: Mock) -> None:
         """Test device_info property returns correct device information."""

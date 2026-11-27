@@ -10,8 +10,8 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .api import IdokepConfig
 from .const import FORECAST_DEVICE, LOCATION, MANUFACTURER, STATION_DEVICE
-from .coordinator import IdokepDataUpdateCoordinator
-from .station import STATION_PAGE_URL, StationCoordinator, station_identifier
+from .coordinator import IdokepDataUpdateCoordinator, StationCoordinator
+from .station import STATION_PAGE_URL, station_identifier
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -39,6 +39,8 @@ def forecast_page_url(config_entry: ConfigEntry) -> str:
 class IdokepEntity(CoordinatorEntity[IdokepDataUpdateCoordinator]):
     """IdokepEntity class."""
 
+    _attr_has_entity_name = True
+
     def __init__(
         self,
         coordinator: IdokepDataUpdateCoordinator,
@@ -60,6 +62,7 @@ class IdokepEntity(CoordinatorEntity[IdokepDataUpdateCoordinator]):
                 ),
             },
             **device_name_fields(coordinator.config_entry, FORECAST_DEVICE),
+            entry_type=DeviceEntryType.SERVICE,
             configuration_url=forecast_page_url(coordinator.config_entry),
         )
 

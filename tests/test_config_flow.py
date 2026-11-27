@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, Mock, call, patch
 
 import pytest
@@ -15,12 +15,17 @@ from homeassistant.data_entry_flow import FlowResultType
 from custom_components.idokep_weather_and_forecast import config_flow
 from custom_components.idokep_weather_and_forecast.api import (
     IdokepApiClientCommunicationError,
+    IdokepApiClientUnknownLocationError,
 )
 from custom_components.idokep_weather_and_forecast.config_flow import (
     IdokepFlowHandler,
     IdokepOptionsFlow,
 )
+from custom_components.idokep_weather_and_forecast.const import RADAR_UNIQUE_ID
 from custom_components.idokep_weather_and_forecast.station import StationDataError
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 
 def _flow(
@@ -32,8 +37,9 @@ def _flow(
     entry = Mock(
         entry_id="entry1",
         title=title,
-        data={"location": "Debrecen-Józsa", "station": "jozsamet"},
-        options=options if options is not None else {},
+        unique_id="debrecen-jozsa",
+        data={"location": "Debrecen-Józsa"},
+        options=options if options is not None else {"station": ["jozsamet"]},
     )
     flow = IdokepOptionsFlow(entry)
     flow.hass = Mock()
@@ -58,13 +64,28 @@ def _patch_checks(
     return (
         patch.object(
             config_flow,
-            "_async_location_error",
-            AsyncMock(return_value=location_error),
+            "_async_check_location",
+            # The name comes back spelled as it was typed
+            AsyncMock(side_effect=lambda _, location: (location, location_error)),
         ),
         patch.object(
             config_flow, "_async_station_error", AsyncMock(return_value=station_error)
         ),
     )
+
+
+async def _submit_passing(
+    step: Callable[[dict], Awaitable[Any]], user_input: dict
+) -> Any:
+    """Submit a corrected form, with every idokep.hu check passing."""
+    location_check, station_check = _patch_checks()
+    with location_check, station_check:
+        return await step(user_input)
+
+
+# What puts a refused Configure or setup form right
+FIXED = {"name": "Debrecen-Józsa", "location": "Debrecen", "station": "jozsamet"}
+FIXED_NEW = {"name": "Home", "location": "Debrecen-Józsa"}
 
 
 @pytest.mark.asyncio
@@ -77,7 +98,9 @@ async def test_form_shows_current_name_location_and_station() -> None:
     schema = {str(key): key for key in result["data_schema"].schema}
     assert list(schema) == ["name", "location", "station", "merge_method", "max_age"]
     assert schema["name"].default() == "Debrecen-Józsa"
-    assert schema["location"].default() == "Debrecen-Józsa"
+    # Not a default, so that it can be cleared
+    assert schema["location"].description == {"suggested_value": "Debrecen-Józsa"}
+    assert schema["location"].default is vol.UNDEFINED
     assert schema["station"].description == {"suggested_value": ["jozsamet"]}
     assert schema["merge_method"].default() == "priority"
     assert schema["max_age"].default() == 60
@@ -86,7 +109,7 @@ async def test_form_shows_current_name_location_and_station() -> None:
 @pytest.mark.asyncio
 async def test_same_location_only_saves_station() -> None:
     """With the location unchanged, only the station option is saved."""
-    flow, _ = _flow()
+    flow, entry = _flow()
     location_check, station_check = _patch_checks()
     with station_check, location_check as check_location:
         result = await flow.async_step_init(
@@ -101,6 +124,7 @@ async def test_same_location_only_saves_station() -> None:
     }
     check_location.assert_not_awaited()
     flow.hass.config_entries.async_update_entry.assert_not_called()
+    assert entry.unique_id == "debrecen-jozsa"
 
 
 @pytest.mark.asyncio
@@ -119,9 +143,11 @@ async def test_new_location_updates_entry() -> None:
     # No title: the entry's name (and so the device names) stays
     flow.hass.config_entries.async_update_entry.assert_called_once_with(
         entry,
-        data={"location": "Debrecen", "station": "jozsamet"},
+        data={"location": "Debrecen"},
         unique_id="debrecen",
     )
+    update = flow.hass.config_entries.async_update_entry.call_args
+    assert update.kwargs["unique_id"] == "debrecen"
     # Options are unchanged, so the flow reloads the entry itself
     flow.hass.config_entries.async_schedule_reload.assert_called_once_with("entry1")
 
@@ -155,6 +181,12 @@ async def test_location_of_another_entry_is_refused() -> None:
     assert result["errors"] == {"location": "already_configured"}
     flow.hass.config_entries.async_update_entry.assert_not_called()
 
+    result = await _submit_passing(flow.async_step_init, FIXED)
+
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    update = flow.hass.config_entries.async_update_entry.call_args
+    assert update.kwargs["unique_id"] == "debrecen"
+
 
 @pytest.mark.asyncio
 async def test_unknown_location_is_refused() -> None:
@@ -170,6 +202,12 @@ async def test_unknown_location_is_refused() -> None:
     assert result["errors"] == {"base": "connection"}
     flow.hass.config_entries.async_update_entry.assert_not_called()
 
+    result = await _submit_passing(flow.async_step_init, FIXED)
+
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    update = flow.hass.config_entries.async_update_entry.call_args
+    assert update.kwargs["unique_id"] == "debrecen"
+
 
 @pytest.mark.asyncio
 async def test_bad_station_does_not_move_location() -> None:
@@ -184,6 +222,12 @@ async def test_bad_station_does_not_move_location() -> None:
     assert result["errors"] == {"station": "station"}
     assert result["description_placeholders"] == {"code": "x"}
     flow.hass.config_entries.async_update_entry.assert_not_called()
+
+    result = await _submit_passing(flow.async_step_init, FIXED)
+
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    update = flow.hass.config_entries.async_update_entry.call_args
+    assert update.kwargs["unique_id"] == "debrecen"
 
 
 
@@ -226,6 +270,8 @@ async def test_new_name_renames_entry_and_devices() -> None:
     flow.hass.config_entries.async_update_entry.assert_called_once_with(
         entry, title="Cottage"
     )
+    # A new name keeps the unique ID
+    assert "unique_id" not in flow.hass.config_entries.async_update_entry.call_args[1]
     registry = get_registry.return_value
     assert registry.async_update_device.call_args_list == [
         call("device0", name="Cottage Forecast"),
@@ -264,12 +310,22 @@ async def test_blank_name_is_refused_in_configure() -> None:
     assert result["errors"] == {"name": "name"}
     flow.hass.config_entries.async_update_entry.assert_not_called()
 
+    result = await _submit_passing(flow.async_step_init, FIXED)
+
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    update = flow.hass.config_entries.async_update_entry.call_args
+    assert update.kwargs["unique_id"] == "debrecen"
+
 # ---- new entry ---------------------------------------------------------------
 
 
 def _user_flow() -> IdokepFlowHandler:
     flow = IdokepFlowHandler()
     flow.hass = Mock()
+    # The Radar entry exists, so the form has no radar checkbox
+    flow.hass.config_entries.async_entries = Mock(
+        return_value=[Mock(unique_id=RADAR_UNIQUE_ID)]
+    )
     flow.async_set_unique_id = AsyncMock()
     flow._abort_if_unique_id_configured = Mock()
     return flow
@@ -277,19 +333,28 @@ def _user_flow() -> IdokepFlowHandler:
 
 @pytest.mark.asyncio
 async def test_user_form_fields() -> None:
-    """The new-entry form asks for the name, the settlement and the station."""
-    result = await _user_flow().async_step_user()
+    """The form asks for the name, the settlement, stations and the radar."""
+    flow = _user_flow()
+    flow.hass.config_entries.async_entries.return_value = []
+    result = await flow.async_step_user()
 
     schema = {str(key): key for key in result["data_schema"].schema}
-    assert list(schema) == ["name", "location", "station", "merge_method", "max_age"]
-    assert isinstance(schema["name"], vol.Required)
-    assert isinstance(schema["location"], vol.Required)
-    assert isinstance(schema["station"], vol.Optional)
+    assert list(schema) == [
+        "name",
+        "location",
+        "station",
+        "merge_method",
+        "max_age",
+        "add_radar",
+    ]
+    # All can be left empty: to add stations only, or only the radar
+    assert all(isinstance(marker, vol.Optional) for marker in schema.values())
+    assert schema["add_radar"].default() is True
 
 
 @pytest.mark.asyncio
 async def test_user_name_is_the_entry_title() -> None:
-    """The name becomes the entry's title; only settlement and station are data."""
+    """The name is the title, the settlement data, the station settings options."""
     flow = _user_flow()
     location_check, station_check = _patch_checks()
     with location_check, station_check:
@@ -299,28 +364,38 @@ async def test_user_name_is_the_entry_title() -> None:
 
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert result["title"] == "Home"
-    assert result["data"] == {
-        "location": "Debrecen-Józsa",
+    assert result["data"] == {"location": "Debrecen-Józsa"}
+    assert result["options"] == {
         "station": ["jozsamet"],
         "merge_method": "priority",
         "max_age": 60,
     }
-    flow.async_set_unique_id.assert_awaited_once_with(unique_id="debrecen-jozsa")
+    assert flow.async_set_unique_id.await_args.kwargs == {
+        "unique_id": "debrecen-jozsa"
+    }
 
 
 @pytest.mark.asyncio
 async def test_user_blank_name_is_refused() -> None:
     """A name of only spaces is refused, the other fields are kept."""
+    flow = _user_flow()
     location_check, station_check = _patch_checks()
     with location_check, station_check:
-        result = await _user_flow().async_step_user(
+        result = await flow.async_step_user(
             {"name": "  ", "location": "Debrecen-Józsa", "station": "jozsamet"}
         )
 
     assert result["type"] == FlowResultType.FORM
     assert result["errors"] == {"name": "name"}
     schema = {str(key): key for key in result["data_schema"].schema}
-    assert schema["location"].default() == "Debrecen-Józsa"
+    assert schema["location"].description == {"suggested_value": "Debrecen-Józsa"}
+
+    result = await _submit_passing(flow.async_step_user, FIXED_NEW)
+
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert flow.async_set_unique_id.await_args.kwargs == {
+        "unique_id": "debrecen-jozsa"
+    }
 
 
 @pytest.mark.asyncio
@@ -340,13 +415,15 @@ async def test_user_several_stations_and_merge_method() -> None:
         )
 
     assert result["type"] == FlowResultType.CREATE_ENTRY
-    assert result["data"] == {
-        "location": "Debrecen-Józsa",
+    assert result["options"] == {
         "station": ["jozsamet", "ha0kaistvan"],
         "merge_method": "average",
         "max_age": 90,
     }
-    assert isinstance(result["data"]["max_age"], int)
+    assert isinstance(result["options"]["max_age"], int)
+    assert flow.async_set_unique_id.await_args.kwargs == {
+        "unique_id": "debrecen-jozsa"
+    }
 
 
 # ---- the idokep.hu checks behind the dialogs -------------------------------------
@@ -354,26 +431,29 @@ async def test_user_several_stations_and_merge_method() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("data", "error", "expected"),
+    ("error", "expected"),
     [
-        ({"temperature": 8}, None, None),
-        ({}, None, "connection"),  # a page without a temperature: unknown settlement
-        (None, IdokepApiClientCommunicationError("down"), "connection"),
-        (None, RuntimeError("bug"), "unknown"),
+        (None, ("Józsa", None)),
+        (
+            IdokepApiClientUnknownLocationError("Budapest"),
+            ("jozsa", "unknown_location"),
+        ),
+        (IdokepApiClientCommunicationError("down"), ("jozsa", "connection")),
+        (RuntimeError("bug"), ("jozsa", "unknown")),
     ],
 )
 async def test_location_check(
-    data: dict | None, error: Exception | None, expected: str | None
+    error: Exception | None, expected: tuple[str, str | None]
 ) -> None:
-    """The settlement is accepted if its current conditions page has a temperature."""
+    """The site's spelling, or the name as typed with the check's form error."""
     client = Mock()
-    client.async_get_current_weather = AsyncMock(return_value=data, side_effect=error)
+    client.async_validate_location = AsyncMock(return_value="Józsa", side_effect=error)
     with (
         patch.object(config_flow, "async_create_clientsession"),
         patch.object(config_flow, "IdokepApiClient", return_value=client),
     ):
-        assert await config_flow._async_location_error(Mock(), "Józsa") == expected
-    client.async_get_current_weather.assert_awaited_once_with("Józsa")
+        assert await config_flow._async_check_location(Mock(), "jozsa") == expected
+    client.async_validate_location.assert_awaited_once_with("jozsa")
 
 
 @pytest.mark.asyncio
@@ -416,28 +496,42 @@ def test_flow_handler_basics() -> None:
 @pytest.mark.asyncio
 async def test_user_unknown_location_is_refused() -> None:
     """An unknown settlement shows the general error; nothing is created."""
+    flow = _user_flow()
     location_check, station_check = _patch_checks(location_error="connection")
     with location_check, station_check:
-        result = await _user_flow().async_step_user(
-            {"name": "Home", "location": "Nowhere"}
-        )
+        result = await flow.async_step_user({"name": "Home", "location": "Nowhere"})
 
     assert result["type"] == FlowResultType.FORM
     assert result["errors"] == {"base": "connection"}
+
+    result = await _submit_passing(flow.async_step_user, FIXED_NEW)
+
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert flow.async_set_unique_id.await_args.kwargs == {
+        "unique_id": "debrecen-jozsa"
+    }
 
 
 @pytest.mark.asyncio
 async def test_user_unknown_station_is_refused() -> None:
     """An unknown station code is named in the error."""
+    flow = _user_flow()
     location_check, station_check = _patch_checks(station_error=("station", "nope"))
     with location_check, station_check:
-        result = await _user_flow().async_step_user(
+        result = await flow.async_step_user(
             {"name": "Home", "location": "Debrecen-Józsa", "station": "nope"}
         )
 
     assert result["type"] == FlowResultType.FORM
     assert result["errors"] == {"station": "station"}
     assert result["description_placeholders"] == {"code": "nope"}
+
+    result = await _submit_passing(flow.async_step_user, FIXED_NEW)
+
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert flow.async_set_unique_id.await_args.kwargs == {
+        "unique_id": "debrecen-jozsa"
+    }
 
 
 @pytest.mark.asyncio

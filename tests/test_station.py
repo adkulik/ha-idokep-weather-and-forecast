@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
@@ -33,11 +34,13 @@ from custom_components.idokep_weather_and_forecast.sensor import (
     IdokepStationSensor,
     async_setup_entry,
 )
+from custom_components.idokep_weather_and_forecast.coordinator import (
+    StationCoordinator,
+)
 from custom_components.idokep_weather_and_forecast.station import (
     _MASK32,
     _SEED,
     SERIES_KEYS,
-    StationCoordinator,
     StationData,
     StationDataError,
     StationSeries,
@@ -215,20 +218,19 @@ def test_latest_readings_age_limit(minutes_old: int, max_age: int, kept: bool) -
 
 
 @pytest.mark.parametrize(
-    ("data", "options", "minutes"),
+    ("options", "minutes"),
     [
-        ({}, {}, 60),
-        ({"max_age": 30}, {}, 30),
-        ({"max_age": 30}, {"max_age": 90}, 90),
-        ({}, {"max_age": 120.0}, 120),
-        ({}, {"max_age": 0}, 60),
-        ({}, {"max_age": 1441}, 60),
-        ({}, {"max_age": "x"}, 60),
+        ({}, 60),
+        ({"max_age": 30}, 30),
+        ({"max_age": 120.0}, 120),
+        ({"max_age": 0}, 60),
+        ({"max_age": 1441}, 60),
+        ({"max_age": "x"}, 60),
     ],
 )
-def test_max_age_minutes(data: dict, options: dict, minutes: int) -> None:
-    """Options override data; a missing or impossible value means 60 minutes."""
-    assert max_age_minutes(Mock(data=data, options=options)) == minutes
+def test_max_age_minutes(options: dict, minutes: int) -> None:
+    """A missing or impossible value means 60 minutes."""
+    assert max_age_minutes(Mock(options=options)) == minutes
 
 
 @pytest.mark.asyncio
@@ -240,7 +242,7 @@ async def test_update_uses_the_configured_age_limit() -> None:
     with (
         _fetching(coordinator, {"jozsamet": series}),
         patch(
-            "custom_components.idokep_weather_and_forecast.station.dt_util.utcnow",
+            "custom_components.idokep_weather_and_forecast.coordinator.dt_util.utcnow",
             return_value=NOW,
         ),
     ):
@@ -410,7 +412,7 @@ def _fetching(coordinator: StationCoordinator, files: dict[str, object]) -> obje
         return result
 
     return patch(
-        "custom_components.idokep_weather_and_forecast.station.fetch_station", fetch
+        "custom_components.idokep_weather_and_forecast.coordinator.fetch_station", fetch
     )
 
 
@@ -436,7 +438,7 @@ async def test_update_skips_a_failed_station() -> None:
     with (
         _fetching(coordinator, {"jozsamet": down, "ha0kaistvan": good}),
         patch(
-            "custom_components.idokep_weather_and_forecast.station.dt_util.utcnow",
+            "custom_components.idokep_weather_and_forecast.coordinator.dt_util.utcnow",
             return_value=NOW,
         ),
     ):
@@ -444,6 +446,33 @@ async def test_update_skips_a_failed_station() -> None:
 
     assert data.values == {"hom": 7.5}
     assert data.sources == {"hom": ("ha0kaistvan",)}
+
+
+@pytest.mark.parametrize(
+    "second",
+    [StationSeries(times=[], series={}), StationDataError("x"), RuntimeError("bug")],
+    ids=["downloaded", "unreadable", "unexpected"],
+)
+async def test_connection_check_passes_if_any_station_answers(second: object) -> None:
+    """One file that is served, readable or not, is enough to go on."""
+    coordinator = _coordinator()
+    down = IdokepApiClientCommunicationError("down")
+    with _fetching(coordinator, {"jozsamet": down, "olig13": second}):
+        await coordinator.async_check_connection()
+
+
+async def test_connection_check_fails_while_no_station_can_be_downloaded() -> None:
+    """The first station's error is the reason."""
+    coordinator = _coordinator()
+    errors = {
+        code: IdokepApiClientCommunicationError(f"{code} down")
+        for code in ("jozsamet", "olig13")
+    }
+    with (
+        _fetching(coordinator, errors),
+        pytest.raises(IdokepApiClientCommunicationError, match="jozsamet down"),
+    ):
+        await coordinator.async_check_connection()
 
 
 # ---- sensors ---------------------------------------------------------------------
@@ -588,27 +617,27 @@ def test_parse_codes(raw: object, expected: list[str]) -> None:
 
 
 @pytest.mark.parametrize(
-    ("data", "options", "codes", "method"),
+    ("options", "codes", "method"),
     [
-        ({"location": "X"}, {}, [], "priority"),
-        ({"station": "jozsamet"}, {}, ["jozsamet"], "priority"),
+        ({}, [], "priority"),
+        # One code as text, as older versions saved it
+        ({"station": "jozsamet"}, ["jozsamet"], "priority"),
         (
-            {"station": ["jozsamet"], "merge_method": "average"},
             {"station": ["olig13", "jozsamet"], "merge_method": "average"},
             ["olig13", "jozsamet"],
             "average",
         ),
-        ({"station": ["jozsamet"]}, {"station": [], "merge_method": "x"}, [], "priority"),
-        ({"station": "a", "merge_method": "newest"}, {}, ["a"], "newest"),
+        ({"station": [], "merge_method": "x"}, [], "priority"),
+        ({"station": "a", "merge_method": "newest"}, ["a"], "newest"),
         # A method that no longer exists falls back to priority
-        ({"station": "a", "merge_method": "oldest"}, {}, ["a"], "priority"),
+        ({"station": "a", "merge_method": "oldest"}, ["a"], "priority"),
     ],
 )
 def test_station_codes_and_merge_method(
-    data: dict, options: dict, codes: list[str], method: str
+    options: dict, codes: list[str], method: str
 ) -> None:
-    """Options override the config flow's values; unknown methods mean priority."""
-    entry = Mock(data=data, options=options)
+    """The codes are listed; an unknown method means priority."""
+    entry = Mock(options=options)
     assert station_codes(entry) == codes
     assert merge_method(entry) == method
 
@@ -801,6 +830,17 @@ async def test_unexpected_error_leaves_the_station_out(
     assert record.exc_info
 
 
+@pytest.mark.asyncio
+async def test_cancellation_is_passed_on() -> None:
+    """A cancelled download is not treated as a failing station."""
+    coordinator = _coordinator()
+    with (
+        _fetching(coordinator, {"jozsamet": asyncio.CancelledError()}),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await coordinator._async_update_data()
+
+
 def test_station_sensor_without_data_has_no_attributes() -> None:
     """Before the first successful fetch there is no stations attribute."""
     hom = next(d for d in STATION_DESCRIPTIONS if d.key == "hom")
@@ -824,7 +864,7 @@ async def test_failed_station_has_no_values_and_is_logged_once(
     with (
         _fetching(coordinator, files),
         patch(
-            "custom_components.idokep_weather_and_forecast.station.dt_util.utcnow",
+            "custom_components.idokep_weather_and_forecast.coordinator.dt_util.utcnow",
             return_value=NOW,
         ),
     ):

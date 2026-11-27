@@ -56,7 +56,7 @@ class TestIdokepData:
 
         # Get field names
         field_names = {field.name for field in dataclasses.fields(IdokepData)}
-        expected_fields = {"client", "coordinator", "station"}
+        expected_fields = {"client", "coordinator", "station", "failures"}
 
         # Verify all expected fields are present
         assert expected_fields == field_names

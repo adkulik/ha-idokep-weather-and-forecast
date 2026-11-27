@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import pytest
-from bs4 import BeautifulSoup
 
 from custom_components.idokep_weather_and_forecast.api import AlertParser
+from custom_components.idokep_weather_and_forecast.html_tree import parse_html
 
 
 class TestAlertParser:
@@ -27,7 +27,7 @@ class TestAlertParser:
             <i class="fas fa-fw fa-exclamation-triangle"></i> {text}
         </div>
         """
-        result = AlertParser().parse(BeautifulSoup(html, "html.parser"))
+        result = AlertParser().parse(parse_html(html))
 
         assert result["warning_level"] == level
         assert result["alerts"] == []
@@ -47,7 +47,7 @@ class TestAlertParser:
             </a>
         </div>
         """
-        soup = BeautifulSoup(html, "html.parser")
+        soup = parse_html(html)
         parser = AlertParser()
         result = parser.parse(soup)
 
@@ -69,7 +69,7 @@ class TestAlertParser:
             </a>
         </div>
         """
-        soup = BeautifulSoup(html, "html.parser")
+        soup = parse_html(html)
         parser = AlertParser()
         result = parser.parse(soup)
 
@@ -98,7 +98,7 @@ class TestAlertParser:
             </a>
         </div>
         """
-        soup = BeautifulSoup(html, "html.parser")
+        soup = parse_html(html)
         parser = AlertParser()
         result = parser.parse(soup)
 
@@ -116,7 +116,7 @@ class TestAlertParser:
             <p>No alerts today</p>
         </div>
         """
-        soup = BeautifulSoup(html, "html.parser")
+        soup = parse_html(html)
         parser = AlertParser()
         result = parser.parse(soup)
 
@@ -130,7 +130,7 @@ class TestAlertParser:
             <a class="hover-over" data-bs-content="Narancs riasztás hőségre"></a>
         </div>
         """
-        soup = BeautifulSoup(html, "html.parser")
+        soup = parse_html(html)
         parser = AlertParser()
         result = parser.parse(soup)
 
@@ -143,7 +143,7 @@ class TestAlertParser:
             <a class="hover-over" data-bs-content="Sárga riasztás ködre"></a>
         </div>
         """
-        soup = BeautifulSoup(html, "html.parser")
+        soup = parse_html(html)
         parser = AlertParser()
         result = parser.parse(soup)
 
@@ -165,7 +165,7 @@ class TestAlertParser:
             </a>
         </div>
         """
-        soup = BeautifulSoup(html, "html.parser")
+        soup = parse_html(html)
         parser = AlertParser()
         result = parser.parse(soup)
 

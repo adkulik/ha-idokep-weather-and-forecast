@@ -636,6 +636,88 @@ def fake_store() -> Iterator[type[FakeStore]]:
         yield FakeStore
 
 
+@pytest.fixture
+def delayed_store() -> Iterator[Mock]:
+    """Replace the coordinator's Store with one that only notes what is asked."""
+    store = Mock(
+        async_load=AsyncMock(return_value=None),
+        async_delay_save=Mock(),
+        async_save=AsyncMock(),
+    )
+    with patch(
+        "custom_components.idokep_weather_and_forecast.coordinator.Store",
+        return_value=store,
+    ):
+        yield store
+
+
+class TestClosingStorage:
+    """At unload a scheduled save is written, and nothing later."""
+
+    @pytest.mark.asyncio
+    async def test_a_scheduled_save_is_written_at_once(
+        self, coordinator: IdokepDataUpdateCoordinator, delayed_store: Mock
+    ) -> None:
+        """The delayed save is done now, with the downloaded forecast."""
+        await restore_at(coordinator, local(2026, 10, 29, 12, 7))
+        await update_at(coordinator, local(2026, 10, 29, 12, 7))
+
+        await coordinator.async_close_storage()
+
+        delayed_store.async_save.assert_awaited_once_with(coordinator._data_to_save())
+        saved = delayed_store.async_save.await_args.args[0]
+        assert saved["location"] == "Budapest"
+        assert saved["sources"][HOURLY]["data"]["hourly_forecast"]
+
+    @pytest.mark.asyncio
+    async def test_nothing_is_saved_afterwards(
+        self, coordinator: IdokepDataUpdateCoordinator, delayed_store: Mock
+    ) -> None:
+        """A download still running at unload must not schedule another save."""
+        await restore_at(coordinator, local(2026, 10, 29, 12, 7))
+        await update_at(coordinator, local(2026, 10, 29, 12, 7))
+        await coordinator.async_close_storage()
+
+        await update_at(coordinator, local(2026, 10, 29, 13, 0))
+        await coordinator.async_close_storage()
+
+        delayed_store.async_delay_save.assert_called_once()
+        delayed_store.async_save.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_nothing_scheduled_writes_nothing(
+        self, coordinator: IdokepDataUpdateCoordinator, delayed_store: Mock
+    ) -> None:
+        """Without a download there is nothing new to write."""
+        await restore_at(coordinator, local(2026, 10, 29, 12, 7))
+
+        await coordinator.async_close_storage()
+
+        delayed_store.async_save.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_without_a_restore_there_is_no_file(
+        self, coordinator: IdokepDataUpdateCoordinator, delayed_store: Mock
+    ) -> None:
+        """Closing before the storage was opened does nothing."""
+        await coordinator.async_close_storage()
+
+        delayed_store.async_save.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_new_location_does_not_relabel_the_forecast(
+        self, coordinator: IdokepDataUpdateCoordinator, delayed_store: Mock
+    ) -> None:
+        """Configure changes the entry before the reload unloads the old one."""
+        await restore_at(coordinator, local(2026, 10, 29, 12, 7))
+        await update_at(coordinator, local(2026, 10, 29, 12, 7))
+        coordinator.config_entry.data = {"location": "Eger"}
+
+        await coordinator.async_close_storage()
+
+        assert delayed_store.async_save.await_args.args[0]["location"] == "Budapest"
+
+
 class TestSavedData:
     """Saving fetched pages and restoring them after a restart."""
 
@@ -764,6 +846,8 @@ class TestSavedData:
         coordinator.config_entry.entry_id = "entry1"
         fake_store.files["idokep_weather_and_forecast.entry1"] = {"sources": 1}
         await restore_at(coordinator, local(2026, 10, 30, 12, 51))
+        # Warned once for the records
+        await restore_at(coordinator, local(2026, 10, 30, 12, 52))
 
         [record] = caplog.records
         assert record.getMessage() == (
@@ -1018,3 +1102,25 @@ async def test_restored_current_hour_has_the_current_estimates(
     kept = client._hourly_parser._last_forecast[0]
     assert kept["native_wind_speed"] == 12
     assert kept["native_wind_gust_speed"] == 21
+
+
+@pytest.mark.parametrize(
+    ("now", "expected"),
+    [
+        (local(2026, 10, 29, 11, 59), False),  # not begun yet
+        (local(2026, 10, 29, 13, 59), True),
+        (local(2026, 10, 29, 14, 0), False),  # over
+    ],
+)
+def test_has_current_forecast(
+    coordinator: IdokepDataUpdateCoordinator, now: datetime, expected: bool
+) -> None:
+    """Only a forecast that has the hour now running counts."""
+    assert coordinator.has_current_forecast is False
+    coordinator._last_forecast = HOURLY_DATA
+
+    with patch(
+        "custom_components.idokep_weather_and_forecast.coordinator.dt_util.utcnow",
+        return_value=dt_util.as_utc(now),
+    ):
+        assert coordinator.has_current_forecast is expected

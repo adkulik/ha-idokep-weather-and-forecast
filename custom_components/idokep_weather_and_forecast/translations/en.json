@@ -4,14 +4,16 @@
             "user": {
                 "data": {
                     "name": "Name",
-                    "location": "Settlement",
+                    "location": "Settlement (optional)",
                     "station": "Weather station codes (optional)",
                     "merge_method": "Merge method",
-                    "max_age": "Maximum reading age"
+                    "max_age": "Maximum reading age",
+                    "add_radar": "National radar"
                 },
                 "data_description": {
-                    "name": "The name of this entry and its devices (e.g. Home).",
-                    "location": "The settlement name as it appears in idokep.hu URLs (e.g. Budapest).",
+                    "name": "The name of this entry and its services (e.g. Home).",
+                    "location": "The settlement name as it appears in idokep.hu URLs (e.g. Budapest). Leave it empty for no forecast.",
+                    "add_radar": "Adds the national radar image. To add only the radar, leave the name, the settlement and the station codes empty.",
                     "station": "Codes of idokep.hu weather stations, as in their page addresses (e.g. jozsamet), in priority order.",
                     "merge_method": "Priority takes each value from the first listed station with a recent enough reading; Newest from the station with the most recent reading; Average takes the mean of the readings.",
                     "max_age": "A station reading older than this many minutes (1-1440) is not used; if no station has a newer one, the sensor is unavailable."
@@ -20,13 +22,17 @@
         },
         "error": {
             "connection": "Could not fetch weather data for this settlement. Check the name and your connection.",
+            "unknown_location": "idokep.hu has no settlement with this name. Write it as in the address of its page (e.g. Debrecen-Józsa).",
             "unknown": "Unknown error occurred.",
             "station": "No weather station data found for the code {code}. Check the code on idokep.hu/automata.",
             "station_connection": "Could not reach idokep.hu for the code {code}. Check your connection.",
-            "name": "Enter a name."
+            "name": "Enter a name.",
+            "nothing": "Enter a settlement or a weather station code.",
+            "nothing_or_radar": "Enter a settlement or a weather station code. To add only the radar, leave the name empty too and keep National radar checked."
         },
         "abort": {
-            "already_configured": "This entry is already configured."
+            "already_configured": "This entry is already configured.",
+            "already_in_progress": "This entry is already being added. Finish that setup before starting again."
         }
     },
     "device": {
@@ -259,11 +265,11 @@
             "storm_expected_1h": {
                 "name": "Storm expected in an hour"
             }
-        },
-        "image": {
-            "national_radar": {
-                "name": "National radar image"
-            }
+        }
+    },
+    "exceptions": {
+        "unknown_location": {
+            "message": "idokep.hu has no settlement named “{location}”, so it would show another settlement's weather. Correct the name in Configure."
         }
     },
     "options": {
@@ -272,15 +278,15 @@
                 "title": "Configuration",
                 "data": {
                     "name": "Name",
-                    "location": "Settlement",
+                    "location": "Settlement (optional)",
                     "station": "Weather station codes (optional)",
                     "merge_method": "Merge method",
                     "max_age": "Maximum reading age"
                 },
                 "data_description": {
-                    "name": "The name of this entry; device names that contain it are renamed too.",
-                    "location": "The settlement name as it appears in idokep.hu URLs (e.g. Budapest).",
-                    "station": "Codes of idokep.hu weather stations, as in their page addresses (e.g. jozsamet), in priority order. Clear them to remove the weather station device.",
+                    "name": "The name of this entry; service names that contain it are renamed too.",
+                    "location": "The settlement name as it appears in idokep.hu URLs (e.g. Budapest). Clear it to remove the forecast service.",
+                    "station": "Codes of idokep.hu weather stations, as in their page addresses (e.g. jozsamet), in priority order. Clear them to remove the weather station service.",
                     "merge_method": "Priority takes each value from the first listed station with a recent enough reading; Newest from the station with the most recent reading; Average takes the mean of the readings.",
                     "max_age": "A station reading older than this many minutes (1-1440) is not used; if no station has a newer one, the sensor is unavailable."
                 }
@@ -290,8 +296,11 @@
             "station": "No weather station data found for the code {code}. Check the code on idokep.hu/automata.",
             "station_connection": "Could not reach idokep.hu for the code {code}. Check your connection.",
             "connection": "Could not fetch weather data for this settlement. Check the name and your connection.",
+            "unknown_location": "idokep.hu has no settlement with this name. Write it as in the address of its page (e.g. Debrecen-Józsa).",
             "unknown": "Unknown error occurred.",
             "already_configured": "This settlement is already configured in another entry.",
+            "stations_configured": "Another entry without a settlement already has these stations.",
+            "nothing": "Enter a settlement or a weather station code.",
             "name": "Enter a name."
         }
     },

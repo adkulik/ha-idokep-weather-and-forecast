@@ -6,12 +6,12 @@ from typing import TYPE_CHECKING
 
 from homeassistant.components.image import ImageEntity
 from homeassistant.core import callback
-from homeassistant.helpers import translation
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, MANUFACTURER
-from .radar import RADAR_PAGE_URL, RadarCoordinator
+from .coordinator import RadarCoordinator
+from .radar import RADAR_PAGE_URL
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -20,19 +20,8 @@ if TYPE_CHECKING:
     from .data import RadarConfigEntry
 
 RADAR_MODEL = "National radar image"
-# Device and entity names: translated ("device" and "entity.image" in the
-# translations), the entity's falls back to English
+# The device's translated name ("device" in the translations) and the icon
 RADAR_TRANSLATION_KEY = "national_radar"
-RADAR_ENTITY_NAME = "National radar image"
-
-
-def radar_entity_name(hass: HomeAssistant) -> str:
-    """Return the image's name in Home Assistant's language."""
-    translations = translation.async_get_cached_translations(
-        hass, hass.config.language, "entity", DOMAIN
-    )
-    key = f"component.{DOMAIN}.entity.image.{RADAR_TRANSLATION_KEY}.name"
-    return translations.get(key, RADAR_ENTITY_NAME)
 
 
 async def async_setup_entry(
@@ -45,12 +34,12 @@ async def async_setup_entry(
 
 
 class IdokepRadarImage(CoordinatorEntity[RadarCoordinator], ImageEntity):
-    """Animated GIF of the national radar (last five frames)."""
+    """Animated GIF of the national radar (last six frames)."""
 
     _attr_content_type = "image/gif"
-    # Named on its own ("National radar image"), not "<device> <entity>", so
-    # HA doesn't translate the name itself (see radar_entity_name)
-    _attr_has_entity_name = False
+    # The device's main entity: named just like the device
+    _attr_has_entity_name = True
+    _attr_name = None
     # Used for the icon in icons.json
     _attr_translation_key = RADAR_TRANSLATION_KEY
 
@@ -60,7 +49,6 @@ class IdokepRadarImage(CoordinatorEntity[RadarCoordinator], ImageEntity):
         ImageEntity.__init__(self, hass)
         entry = coordinator.config_entry
         self._attr_unique_id = f"{entry.entry_id}_national_radar"
-        self._attr_name = radar_entity_name(hass)
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
             translation_key=RADAR_TRANSLATION_KEY,

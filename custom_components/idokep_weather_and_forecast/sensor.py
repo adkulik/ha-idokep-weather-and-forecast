@@ -47,9 +47,9 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-    from .coordinator import IdokepDataUpdateCoordinator
+    from .coordinator import IdokepDataUpdateCoordinator, StationCoordinator
     from .data import IdokepConfigEntry
-    from .station import StationCoordinator, StationData
+    from .station import StationData
 
 # Numeric sensors are shown with 1 decimal (users can change it per entity)
 DISPLAY_PRECISION = 1
@@ -431,13 +431,14 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the sensor platform."""
-    async_add_entities(
-        IdokepSensor(
-            coordinator=entry.runtime_data.coordinator,
-            entity_description=entity_description,
+    if (coordinator := entry.runtime_data.coordinator) is not None:
+        async_add_entities(
+            IdokepSensor(
+                coordinator=coordinator,
+                entity_description=entity_description,
+            )
+            for entity_description in ENTITY_DESCRIPTIONS
         )
-        for entity_description in ENTITY_DESCRIPTIONS
-    )
     if (station := entry.runtime_data.station) is not None:
         async_add_entities(
             [
@@ -458,11 +459,6 @@ async def async_setup_entry(
 
 class IdokepSensor(IdokepEntity, SensorEntity):
     """Idokep Sensor class."""
-
-    @property
-    def has_entity_name(self) -> bool:
-        """Return True if the entity has a name."""
-        return True
 
     def __init__(
         self,

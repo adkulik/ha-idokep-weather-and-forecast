@@ -26,8 +26,6 @@ from typing import TYPE_CHECKING
 from urllib.parse import quote
 
 import aiohttp
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
-from homeassistant.util import dt as dt_util
 
 from .api import (
     _BROWSER_HEADERS,
@@ -47,21 +45,14 @@ from .const import (
     MIN_MAX_AGE,
     STATION,
 )
-from .failures import FailureLog
 
 if TYPE_CHECKING:
-    from logging import Logger
-
     from homeassistant.config_entries import ConfigEntry
-    from homeassistant.core import HomeAssistant
 
 STATION_URL = "https://www.idokep.hu/automata/{code}.bin"
 # The station's page on idokep.hu (the device's "Visit" link)
 STATION_PAGE_URL = "https://www.idokep.hu/automata/{code}"
 TIMEOUT = 10
-# Regular fetch on every 5th minute at second 59 (x:00:59, x:05:59, ...);
-# after a failure, again every minute until it succeeds
-CHECK_EVERY_MINUTES = 5
 
 # Series in the order the file numbers them (the site's chart definitions)
 SERIES_KEYS = (
@@ -105,19 +96,19 @@ def parse_codes(raw: str | Iterable[str] | None) -> list[str]:
 
 
 def station_codes(entry: ConfigEntry) -> list[str]:
-    """Return the entry's weather station codes (options win over data)."""
-    return parse_codes(entry.options.get(STATION, entry.data.get(STATION)))
+    """Return the entry's weather station codes."""
+    return parse_codes(entry.options.get(STATION))
 
 
 def merge_method(entry: ConfigEntry) -> str:
-    """Return the entry's merge method (options win over data)."""
-    method = entry.options.get(MERGE_METHOD, entry.data.get(MERGE_METHOD))
+    """Return the entry's merge method."""
+    method = entry.options.get(MERGE_METHOD)
     return method if method in MERGE_METHODS else MERGE_PRIORITY
 
 
 def max_age_minutes(entry: ConfigEntry) -> int:
-    """Return the entry's reading age limit in minutes (options win over data)."""
-    minutes = entry.options.get(MAX_AGE, entry.data.get(MAX_AGE))
+    """Return the entry's reading age limit in minutes."""
+    minutes = entry.options.get(MAX_AGE)
     if isinstance(minutes, int | float) and MIN_MAX_AGE <= minutes <= MAX_MAX_AGE:
         return int(minutes)
     return DEFAULT_MAX_AGE
@@ -355,84 +346,3 @@ async def fetch_station(session: aiohttp.ClientSession, code: str) -> StationSer
         msg = f"Error fetching {url} - {exception}"
         raise IdokepApiClientCommunicationError(msg) from exception
     return decode_station(raw)
-
-
-class StationCoordinator(DataUpdateCoordinator[StationData]):
-    """Keep a location entry's merged weather station measurements up to date."""
-
-    def __init__(
-        self,
-        hass: HomeAssistant,
-        logger: Logger,
-        config_entry: ConfigEntry,
-        session: aiohttp.ClientSession,
-        codes: list[str],
-        method: str = MERGE_PRIORITY,
-        max_age: int = DEFAULT_MAX_AGE,
-    ) -> None:
-        """Initialize the coordinator."""
-        super().__init__(
-            hass,
-            logger=logger,
-            name=f"idokep_weather_and_forecast_station_{config_entry.entry_id}",
-            update_interval=None,
-            config_entry=config_entry,
-        )
-        self._session = session
-        self.codes = codes
-        self.method = method
-        self.max_age = max_age
-        self._failures = {
-            code: FailureLog(logger, f"Időkép station {code} download")
-            for code in codes
-        }
-        # True while a station failed: it is retried every minute
-        self.retrying = False
-
-    async def async_tick(self, now: datetime) -> None:
-        """
-        Fetch on every 5th minute; retry every minute after a failure.
-
-        Called every minute at second 59. Like the other pages: honours
-        "Enable polling for updates" and skips while no station sensor is
-        enabled.
-        """
-        if self.config_entry.pref_disable_polling or not self._listeners:
-            return
-        if (
-            now.minute % CHECK_EVERY_MINUTES
-            and self.last_update_success
-            and not self.retrying
-        ):
-            return
-        await self.async_refresh()
-
-    async def _async_update_data(self) -> StationData:
-        """
-        Download every station's file and merge their readings.
-
-        A station that fails is left out; with every station failing there are
-        no values, so the sensors are unavailable.
-        """
-        results = await asyncio.gather(
-            *(fetch_station(self._session, code) for code in self.codes),
-            return_exceptions=True,
-        )
-        now = dt_util.utcnow()
-        stations: list[StationReadings] = []
-        failed = False
-        for code, result in zip(self.codes, results, strict=True):
-            if isinstance(result, IdokepApiClientError):
-                self._failures[code].failed(result)
-                failed = True
-            elif isinstance(result, Exception):
-                # Unexpected, e.g. a decoder error: with the traceback
-                self._failures[code].failed(repr(result), exc_info=result)
-                failed = True
-            elif isinstance(result, BaseException):
-                raise result
-            else:
-                self._failures[code].succeeded()
-                stations.append(latest_readings(result, code, now, self.max_age))
-        self.retrying = failed
-        return merge_readings(stations, self.method)
